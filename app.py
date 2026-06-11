@@ -758,9 +758,12 @@ def render_performance_tab():
             st.plotly_chart(fig2, use_container_width=True)
 
             money_cols = ['목표(131)', '실적(131)', '목표(152)', '실적(152)', '목표(합계)', '실적(합계)']
+            cnt_show_cols = ['실적건수(131)', '실적건수(152)', '실적건수(합계)']
             plan_df_display = plan_df.copy()
             for c in money_cols:
                 plan_df_display[c] = plan_df_display[c].map(fmt_won)
+            for c in cnt_show_cols:
+                plan_df_display[c] = plan_df_display[c].map('{:,}'.format)
             st.dataframe(plan_df_display, use_container_width=True)
 
             # ── 건수 비교 (전년 대비) ────────────────────────────────
@@ -840,7 +843,16 @@ def render_performance_tab():
 
     # ── 지역 × 코드 교차분석 ──────────────────────────────────────
     panel_title("🗺️ 지역 × 코드 교차분석")
-    crosstab = region_code_crosstab(frows)
+    ct_year_label = st.selectbox(
+        "연도", ["전체"] + [str(y) for y in opts['years']], key="ct_year"
+    )
+    if ct_year_label == "전체":
+        ct_rows = frows
+        st.caption(f"기준: 전체 ({', '.join(str(y) for y in opts['years'])}년 합산)")
+    else:
+        ct_rows = [r for r in frows if r['year'] == int(ct_year_label)]
+        st.caption(f"기준: {ct_year_label}년")
+    crosstab = region_code_crosstab(ct_rows)
     if crosstab:
         ct_df = pd.DataFrame(crosstab)
         money_df = ct_df[['region', 'c131', 'c152', 'other', 'total']].rename(columns={
