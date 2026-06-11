@@ -61,17 +61,20 @@ st.markdown("""
 .stApp { background: var(--bg); }
 
 /* 상단 여백 축소 + 폭 */
-.block-container { padding-top: 1rem; padding-bottom: 2rem; max-width: 1400px; }
+.block-container { padding-top: 0.5rem; padding-bottom: 2rem; max-width: 1400px; }
 
 /* 사이드바 숨김 (단일 화면 + 상단 탭 구조) */
 [data-testid="stSidebar"], [data-testid="collapsedControl"] { display: none; }
+
+/* Streamlit 기본 상단 헤더/툴바 숨김 (FITI 헤더가 가려지는 문제 해결) */
+[data-testid="stHeader"], [data-testid="stToolbar"] { display: none !important; height: 0 !important; }
 
 /* FITI 헤더 바 */
 .fiti-header {
     background: #003f85;
     color: white;
     padding: 14px 28px;
-    margin: -1rem -1rem 1.2rem -1rem;
+    margin: 0 -1rem 1.2rem -1rem;
     border-bottom: 3px solid var(--fiti-blue);
     display: flex;
     align-items: center;
@@ -687,21 +690,23 @@ with st.expander("ℹ️ 사용 안내", expanded=False):
 브라우저를 새로고침하거나 세션이 종료되면 업로드/분석 내용은 초기화됩니다. 필요한 결과는 각 화면의 다운로드 버튼으로 저장해 두세요.
 """)
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📄 PDF → Excel 변환",
-    "📊 불량명 표준화",
-    "🏭 공장·지역 분석",
+main_tab1, main_tab2 = st.tabs([
+    "📋 보고서 분석",
     "📈 실적 분석",
 ])
 
-with tab1:
-    render_pdf_tab()
+with main_tab1:
+    sub_tab1, sub_tab2, sub_tab3 = st.tabs([
+        "📄 PDF → Excel 변환",
+        "📊 불량명 표준화",
+        "🏭 공장·지역 분석",
+    ])
+    with sub_tab1:
+        render_pdf_tab()
+    with sub_tab2:
+        render_defect_tab()
+    with sub_tab3:
+        render_factory_tab()
 
-with tab2:
-    render_defect_tab()
-
-with tab3:
-    render_factory_tab()
-
-with tab4:
+with main_tab2:
     render_performance_tab()
