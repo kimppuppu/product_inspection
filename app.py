@@ -1,27 +1,707 @@
 """
-app.py — 제품평가팀 불량률·실적 분석 웹앱 (Streamlit 버전)
+app.py — 제품평가팀 불량률·실적 분석 웹앱 (Streamlit, FITI UI)
 실행: streamlit run app.py
 """
+import sys
+import shutil
+import tempfile
+from pathlib import Path
+from datetime import datetime
+
 import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from core.pdf_extractor import parse_pdf, make_workbook
+from core.defect_core import (
+    load_standard, load_raw, build_mapping, mapping_to_records,
+    calc_stats, build_excel, save_corrections_to_std,
+)
+from core.factory_ranking import (
+    calc_factory_ranking, calc_region_heatmap, calc_factory_detail,
+    build_ai_comment_data, get_filter_options as get_factory_filter_options,
+)
+from core.ai_comment import get_comment
+from core.pdf_report import generate_factory_pdf
+from core.performance_core import (
+    load_performance, filter_rows, get_filter_options as get_perf_filter_options,
+    summary_by_brand, region_code_crosstab, yoy_comparison, monthly_compare,
+    cumulative_by_year, actual_by_month_code, load_plan_budget, CODE_LABELS,
+    summary_by_year,
+)
 
 st.set_page_config(
-    page_title="제품평가팀 분석 웹앱",
+    page_title="제품평가 업무관리",
     page_icon="📋",
     layout="wide",
 )
 
-st.title("📋 제품평가팀 불량률·실적 분석 웹앱")
-
+# ──────────────────────────────────────────────────────────────────
+# FITI 브랜딩 — 커스텀 CSS
+# ──────────────────────────────────────────────────────────────────
 st.markdown("""
-왼쪽 사이드바에서 원하는 기능을 선택하세요.
+<style>
+:root {
+    --primary: #0052a3;
+    --primary-light: #e8f3fc;
+    --fiti-blue: #0075c9;
+    --success: #1e7e34;
+    --success-bg: #C6EFCE;
+    --warn-bg: #FFEB9C;
+    --danger-bg: #FFC7CE;
+    --gray: #6c757d;
+    --border: #dee2e6;
+    --bg: #f2f6fb;
+}
 
+/* 전체 배경 */
+.stApp { background: var(--bg); }
+
+/* 상단 여백 축소 + 폭 */
+.block-container { padding-top: 1rem; padding-bottom: 2rem; max-width: 1400px; }
+
+/* 사이드바 숨김 (단일 화면 + 상단 탭 구조) */
+[data-testid="stSidebar"], [data-testid="collapsedControl"] { display: none; }
+
+/* FITI 헤더 바 */
+.fiti-header {
+    background: #003f85;
+    color: white;
+    padding: 14px 28px;
+    margin: -1rem -1rem 1.2rem -1rem;
+    border-bottom: 3px solid var(--fiti-blue);
+    display: flex;
+    align-items: center;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.18);
+}
+.fiti-logo-wrap { display: flex; align-items: center; gap: 14px; }
+.fiti-logo-text { font-size: 26px; font-weight: 900; letter-spacing: -1px; line-height: 1; }
+.fiti-logo-text .fi { color: #ffffff; }
+.fiti-logo-text .ti { color: var(--fiti-blue); }
+.fiti-divider { width: 1px; height: 34px; background: rgba(255,255,255,0.25); }
+.fiti-app-name { font-size: 17px; font-weight: 800; letter-spacing: -0.3px; }
+.fiti-app-sub { font-size: 11px; opacity: 0.65; margin-top: 2px; letter-spacing: 0.2px; }
+
+/* 상단 탭 — index.html .tabs / .tab 스타일 매칭 */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 4px;
+    background: white;
+    border-bottom: 2px solid var(--border);
+    padding: 0 12px;
+    border-radius: 10px 10px 0 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.stTabs [data-baseweb="tab"] {
+    height: 48px;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--gray);
+}
+.stTabs [data-baseweb="tab"]:hover { color: var(--primary); }
+.stTabs [aria-selected="true"] {
+    color: var(--primary) !important;
+    border-bottom: 3px solid var(--fiti-blue) !important;
+}
+.stTabs [data-baseweb="tab-panel"] { padding-top: 1.2rem; }
+
+/* 패널/섹션 제목 — index.html .panel-title 매칭 */
+.panel-title {
+    font-size: 15px; font-weight: 700; color: var(--primary);
+    margin: 1.4rem 0 0.9rem 0; padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+.panel-title:first-child { margin-top: 0; }
+
+/* 카드(KPI/지표) — index.html .card 스타일 매칭 */
+[data-testid="stMetric"] {
+    background: white;
+    border-radius: 10px;
+    padding: 16px 18px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+[data-testid="stMetricValue"] { color: var(--primary); font-weight: 800; }
+[data-testid="stMetricLabel"] { color: var(--gray); }
+
+/* 버튼 — primary 색상은 config.toml과 함께 적용 */
+.stButton>button[kind="primary"], .stDownloadButton>button[kind="primary"] {
+    background: var(--primary);
+    border-color: var(--primary);
+}
+.stButton>button[kind="primary"]:hover, .stDownloadButton>button[kind="primary"]:hover {
+    background: #003f85;
+    border-color: #003f85;
+}
+
+/* 안내 박스 / 데이터프레임 라운딩 */
+[data-testid="stDataFrame"] { border-radius: 8px; overflow: hidden; }
+</style>
+""", unsafe_allow_html=True)
+
+# ──────────────────────────────────────────────────────────────────
+# FITI 헤더
+# ──────────────────────────────────────────────────────────────────
+st.markdown("""
+<div class="fiti-header">
+  <div class="fiti-logo-wrap">
+    <span class="fiti-logo-text"><span class="fi">FI</span><span class="ti">TI</span></span>
+    <div class="fiti-divider"></div>
+    <div>
+      <div class="fiti-app-name">제품평가팀 불량률·실적 분석</div>
+      <div class="fiti-app-sub">Quality Inspection Analytics</div>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+
+def panel_title(text: str):
+    st.markdown(f'<div class="panel-title">{text}</div>', unsafe_allow_html=True)
+
+
+def fmt_money(v):
+    return f"{v/1e8:,.2f}억원" if abs(v) >= 1e8 else f"{v:,.0f}원"
+
+
+DEFAULT_STD_PATH = Path(__file__).resolve().parent / "표준불량명칭.xlsx"
+DEFAULT_PLAN_PATH = Path(__file__).resolve().parent / "plan_budget.xlsx"
+
+if "tmpdir" not in st.session_state:
+    st.session_state.tmpdir = tempfile.mkdtemp(prefix="defect_")
+tmpdir = Path(st.session_state.tmpdir)
+
+
+# ──────────────────────────────────────────────────────────────────
+# 탭1: PDF → Excel 변환
+# ──────────────────────────────────────────────────────────────────
+def render_pdf_tab():
+    panel_title("📄 불량보고서 PDF → Excel 변환")
+    st.markdown("불량보고서 PDF 파일들을 업로드하면 통합 Excel 파일로 변환합니다.")
+
+    uploaded_files = st.file_uploader(
+        "PDF 파일 업로드 (여러 개 선택 가능)",
+        type=["pdf"],
+        accept_multiple_files=True,
+        key="pdf_uploader",
+    )
+
+    if uploaded_files:
+        st.write(f"업로드된 파일: {len(uploaded_files)}개")
+
+        if st.button("🚀 변환 시작", type="primary", key="pdf_convert_btn"):
+            records = []
+            failed = []
+            progress = st.progress(0.0)
+            status = st.empty()
+            log_box = st.container(height=250)
+
+            with tempfile.TemporaryDirectory() as tdir:
+                total = len(uploaded_files)
+                for i, uf in enumerate(sorted(uploaded_files, key=lambda f: f.name), 1):
+                    status.write(f"({i}/{total}) 변환 중: {uf.name}")
+                    tmp_path = Path(tdir) / uf.name
+                    tmp_path.write_bytes(uf.getvalue())
+                    try:
+                        rec = parse_pdf(str(tmp_path))
+                        records.append(rec)
+                        log_box.write(f"✅ 완료: {rec.get('REPORT NO.', '')} / {rec.get('공장', '')}")
+                    except Exception as e:
+                        failed.append(uf.name)
+                        log_box.write(f"❌ 실패: {uf.name} — {e}")
+                    progress.progress(i / total)
+
+                if not records:
+                    st.error("변환에 성공한 PDF가 없습니다.")
+                else:
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    out_name = f"불량율_분석_통합_{ts}.xlsx"
+                    out_path = Path(tdir) / out_name
+                    make_workbook(records, str(out_path))
+
+                    st.success(f"✅ 완료 — 성공 {len(records)}개 / 실패 {len(failed)}개")
+                    if failed:
+                        st.warning("실패한 파일: " + ", ".join(failed))
+
+                    st.download_button(
+                        "⬇️ 통합 Excel 다운로드",
+                        data=out_path.read_bytes(),
+                        file_name=out_name,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary",
+                    )
+    else:
+        st.info("PDF 파일을 업로드해주세요.")
+
+
+# ──────────────────────────────────────────────────────────────────
+# 탭2: 불량명 표준화 매핑
+# ──────────────────────────────────────────────────────────────────
+def render_defect_tab():
+    panel_title("📊 불량명 표준화 매핑")
+
+    panel_title("1단계: 표준불량명칭 파일")
+    std_file = st.file_uploader(
+        "표준불량명칭.xlsx 업로드 (선택, 업로드하지 않으면 기본 파일 사용)",
+        type=["xlsx"], key="std_uploader",
+    )
+
+    if std_file is not None:
+        std_path = tmpdir / "표준불량명칭.xlsx"
+        std_path.write_bytes(std_file.getvalue())
+        st.session_state.std_path = str(std_path)
+    elif "std_path" not in st.session_state:
+        std_path = tmpdir / "표준불량명칭.xlsx"
+        shutil.copy(DEFAULT_STD_PATH, std_path)
+        st.session_state.std_path = str(std_path)
+
+    std_path = Path(st.session_state.std_path)
+    st.caption(f"사용 중인 표준불량명칭 파일: {'업로드된 파일' if std_file is not None else '기본 파일'}")
+
+    panel_title("2단계: 불량상세 데이터 업로드")
+    raw_files = st.file_uploader(
+        "불량상세 데이터 (Excel, '② 불량상세' 시트 포함, 여러 개 선택 가능)",
+        type=["xlsx"], accept_multiple_files=True, key="raw_uploader",
+    )
+
+    if raw_files and st.button("🔍 매핑 분석 시작", type="primary", key="mapping_btn"):
+        with st.spinner("분석 중..."):
+            raw_paths = []
+            for f in raw_files:
+                p = tmpdir / f.name
+                p.write_bytes(f.getvalue())
+                raw_paths.append(str(p))
+
+            std_names, adict, used_sheet = load_standard(str(std_path))
+            raw_rows, skipped = load_raw(raw_paths)
+            cache, catmap = build_mapping(raw_rows, std_names, adict)
+
+            st.session_state.std_names = std_names
+            st.session_state.adict = adict
+            st.session_state.raw_rows = raw_rows
+            st.session_state.cache = cache
+            st.session_state.catmap = catmap
+            st.session_state.skipped = skipped
+
+        st.success("분석 완료!")
+
+    if "raw_rows" in st.session_state:
+        raw_rows = st.session_state.raw_rows
+        cache = st.session_state.cache
+        catmap = st.session_state.catmap
+        std_names = st.session_state.std_names
+
+        if st.session_state.get("skipped"):
+            st.warning("건너뛴 파일: " + ", ".join(st.session_state.skipped))
+
+        stats = calc_stats(cache)
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("전체 항목", stats['total'])
+        c2.metric("자동매핑", stats['auto'])
+        c3.metric("검토필요", stats['review'])
+        c4.metric("미매핑", stats['unmapped'])
+        c5.metric("자동매핑률", f"{stats['auto_pct']}%")
+
+        records = mapping_to_records(raw_rows, cache, catmap)
+        df = pd.DataFrame(records)
+
+        panel_title("매핑 결과")
+        filter_opt = st.radio("필터", ["전체", "검토 필요", "미매핑"], horizontal=True, key="mapping_filter")
+        if filter_opt == "검토 필요":
+            view = df[df['review'] == True]
+        elif filter_opt == "미매핑":
+            view = df[df['method'] == '미매핑']
+        else:
+            view = df
+
+        show_cols = ['file', 'report_no', 'date', 'factory', 'defect_raw',
+                      'part', 'std', 'category', 'score', 'method', 'review', 'note']
+        st.dataframe(view[show_cols], use_container_width=True, height=400)
+
+        panel_title("수동 수정 — 검토 필요 / 미매핑 항목")
+        review_df = (
+            df[df['review'] == True][['part', 'std', 'method', 'score']]
+            .drop_duplicates(subset=['part'])
+            .reset_index(drop=True)
+        )
+        if not review_df.empty:
+            review_df = review_df.rename(columns={
+                'part': '분리불량명', 'std': '추천 표준명', 'method': '매핑방법', 'score': '신뢰도',
+            })
+            review_df['확정표준명'] = review_df['추천 표준명']
+            std_options = [s[0] for s in std_names]
+
+            edited = st.data_editor(
+                review_df,
+                column_config={
+                    "확정표준명": st.column_config.SelectboxColumn(options=[""] + std_options),
+                },
+                disabled=['분리불량명', '추천 표준명', '매핑방법', '신뢰도'],
+                use_container_width=True,
+                height=300,
+                key="correction_editor",
+            )
+
+            if st.button("✅ 수정사항 적용 및 표준불량명칭에 저장", key="save_correction_btn"):
+                corrections = []
+                for _, row in edited.iterrows():
+                    if row['확정표준명'] and row['확정표준명'] != row['추천 표준명']:
+                        corrections.append({"part": row['분리불량명'], "std": row['확정표준명']})
+                if corrections:
+                    added = save_corrections_to_std(str(std_path), corrections)
+                    st.success(f"{added}개 별칭이 표준불량명칭.xlsx에 저장되었습니다. 재분석합니다...")
+                    std_names, adict, _ = load_standard(str(std_path))
+                    cache, catmap = build_mapping(raw_rows, std_names, adict)
+                    st.session_state.std_names = std_names
+                    st.session_state.adict = adict
+                    st.session_state.cache = cache
+                    st.session_state.catmap = catmap
+                    st.rerun()
+                else:
+                    st.info("변경된 항목이 없습니다.")
+        else:
+            st.info("검토가 필요한 항목이 없습니다.")
+
+        panel_title("다운로드")
+        col1, col2 = st.columns(2)
+        with col1:
+            out_path = tmpdir / "불량명_표준화_매핑결과.xlsx"
+            build_excel(raw_rows, cache, std_names, catmap, str(out_path))
+            st.download_button(
+                "⬇️ 매핑 결과 Excel 다운로드",
+                data=out_path.read_bytes(),
+                file_name="불량명_표준화_매핑결과.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_mapping",
+            )
+        with col2:
+            st.download_button(
+                "⬇️ 수정된 표준불량명칭.xlsx 다운로드",
+                data=std_path.read_bytes(),
+                file_name="표준불량명칭.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_std",
+            )
+
+        st.info("💡 이 화면에서 분석한 데이터는 '🏭 공장·지역 분석' 탭에서 그대로 사용할 수 있습니다.")
+    elif not raw_files:
+        st.info("불량상세 데이터 파일을 업로드 후 '매핑 분석 시작' 버튼을 눌러주세요.")
+
+
+# ──────────────────────────────────────────────────────────────────
+# 탭3: 공장·지역 분석
+# ──────────────────────────────────────────────────────────────────
+def render_factory_tab():
+    panel_title("🏭 공장·지역 분석")
+
+    if "raw_rows" not in st.session_state or "cache" not in st.session_state:
+        st.warning("먼저 '📊 불량명 표준화' 탭에서 데이터를 업로드하고 분석을 실행해주세요.")
+        return
+
+    raw_rows = st.session_state.raw_rows
+    cache = st.session_state.cache
+
+    opts = get_factory_filter_options(raw_rows)
+    months = opts['months']
+
+    panel_title("필터")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        start = st.selectbox("시작 월", months, index=0 if months else None, key="f_start")
+    with c2:
+        end = st.selectbox("종료 월", months, index=len(months) - 1 if months else None, key="f_end")
+    with c3:
+        buyer = st.selectbox("바이어", ["전체"] + opts['buyers'], key="f_buyer")
+    with c4:
+        item = st.selectbox("품명", ["전체"] + opts['items'], key="f_item")
+
+    ranking = calc_factory_ranking(raw_rows, cache, start=start, end=end, buyer=buyer, item=item)
+    heatmap = calc_region_heatmap(raw_rows, start=start, end=end)
+
+    trend_mark = {'up': '↑ 악화', 'down': '↓ 개선', 'flat': '→ 보합', 'new': '(데이터 부족)'}
+
+    panel_title("🏆 공장별 불량률 랭킹")
+    if ranking:
+        rank_df = pd.DataFrame(ranking)[
+            ['rank', 'factory', 'region_label', 'avg_rate', 'total_inspec', 'total_defect', 'record_count', 'trend']
+        ].rename(columns={
+            'rank': '순위', 'factory': '공장', 'region_label': '지역',
+            'avg_rate': '평균불량률(%)', 'total_inspec': '검사수량', 'total_defect': '불량수량',
+            'record_count': '건수', 'trend': '추이',
+        })
+        rank_df['추이'] = rank_df['추이'].map(trend_mark)
+        st.dataframe(rank_df, use_container_width=True, height=400)
+    else:
+        st.info("선택한 조건에 해당하는 데이터가 없습니다.")
+
+    panel_title("🗺️ 지역별 불량률 히트맵")
+    if heatmap:
+        heat_df = pd.DataFrame(heatmap).rename(columns={
+            'region1': '지역', 'avg_rate': '평균불량률(%)', 'total_inspec': '검사수량',
+            'total_defect': '불량수량', 'factory_count': '공장수',
+        })
+        fig = px.bar(heat_df, x='지역', y='평균불량률(%)', color='평균불량률(%)',
+                      color_continuous_scale='RdYlGn_r', text='평균불량률(%)')
+        st.plotly_chart(fig, use_container_width=True)
+        st.dataframe(heat_df, use_container_width=True)
+    else:
+        st.info("지역별 데이터가 없습니다.")
+
+    panel_title("💬 코멘트")
+    if ranking:
+        period = f"{start} ~ {end}" if start and end else "전체기간"
+        ai_data = build_ai_comment_data(ranking, period)
+        try:
+            api_key = st.secrets.get("ANTHROPIC_API_KEY")
+        except Exception:
+            api_key = None
+        if st.button("코멘트 생성", key="comment_btn"):
+            with st.spinner("코멘트 생성 중..."):
+                comment = get_comment(ai_data, api_key)
+            st.markdown(comment)
+
+    panel_title("🔍 공장 상세")
+    if ranking:
+        factory_names = [r['factory'] for r in ranking]
+        selected_factory = st.selectbox("공장 선택", factory_names, key="factory_select")
+
+        if selected_factory:
+            detail = calc_factory_detail(raw_rows, cache, selected_factory)
+            if detail:
+                d1, d2, d3 = st.columns(3)
+                d1.metric("검사수량 합계", f"{detail['total_inspec']:,}")
+                d2.metric("불량수량 합계", f"{detail['total_defect']:,}")
+                d3.metric("데이터 건수", f"{detail['record_count']:,}")
+
+                if detail['monthly']:
+                    m_df = pd.DataFrame(detail['monthly'])
+                    fig2 = px.line(m_df, x='month', y='rate', markers=True,
+                                    title="월별 불량률 추이(%)")
+                    st.plotly_chart(fig2, use_container_width=True)
+
+                if detail['top5_defects']:
+                    st.markdown("**불량 유형 TOP5**")
+                    top5_df = pd.DataFrame(detail['top5_defects']).rename(
+                        columns={'name': '불량명', 'qty': '수량', 'pct': '비율(%)'}
+                    )
+                    st.dataframe(top5_df, use_container_width=True)
+
+                pdf_bytes = generate_factory_pdf(detail)
+                st.download_button(
+                    "⬇️ 공장별 PDF 보고서 다운로드",
+                    data=pdf_bytes,
+                    file_name=f"{selected_factory}_분석보고서.pdf",
+                    mime="application/pdf",
+                    key="dl_factory_pdf",
+                )
+            else:
+                st.info("해당 공장의 데이터가 없습니다.")
+
+
+# ──────────────────────────────────────────────────────────────────
+# 탭4: 실적 분석
+# ──────────────────────────────────────────────────────────────────
+def render_performance_tab():
+    panel_title("📈 실적 분석")
+
+    panel_title("데이터 업로드")
+    perf_file = st.file_uploader("실적 rawdata 업로드 (Excel)", type=["xlsx"], key="perf_uploader")
+
+    if perf_file is not None and st.button("📥 데이터 로드", type="primary", key="perf_load_btn"):
+        with st.spinner("로드 중..."):
+            p = tmpdir / perf_file.name
+            p.write_bytes(perf_file.getvalue())
+            rows = load_performance(str(p))
+            st.session_state.perf_rows = rows
+        st.success(f"{len(rows):,}건 로드 완료")
+
+    if "perf_rows" not in st.session_state:
+        st.info("실적 rawdata 파일을 업로드하고 '데이터 로드' 버튼을 눌러주세요.")
+        return
+
+    rows = st.session_state.perf_rows
+    opts = get_perf_filter_options(rows)
+
+    panel_title("필터")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        f_years = st.multiselect("연도", opts['years'], default=opts['years'], key="p_years")
+    with c2:
+        f_region = st.selectbox("지역", ["전체"] + opts['regions'], key="p_region")
+    with c3:
+        f_code = st.selectbox("코드", ["전체"] + [f"{c} ({CODE_LABELS.get(c, c)})" for c in opts['codes']], key="p_code")
+        f_code_val = f_code.split(" ")[0] if f_code != "전체" else None
+    with c4:
+        f_buyer = st.selectbox("바이어", ["전체"] + opts['buyers'], key="p_buyer")
+
+    frows = filter_rows(
+        rows,
+        years=f_years if f_years else None,
+        region=None if f_region == "전체" else f_region,
+        code=f_code_val,
+        buyer=None if f_buyer == "전체" else f_buyer,
+    )
+
+    # ── KPI ──────────────────────────────────────────────────────
+    panel_title("KPI")
+    yearly = summary_by_year(frows)
+    if yearly:
+        cols = st.columns(len(yearly))
+        for col, y in zip(cols, yearly):
+            col.metric(f"{y['year']}년 수익", fmt_money(y['revenue']), f"{y['cnt']:,}건")
+    else:
+        st.info("선택한 조건에 해당하는 데이터가 없습니다.")
+
+    # ── 3개년 월별 추이 ──────────────────────────────────────────
+    panel_title("📊 3개년 월별 추이")
+    dim_label = st.selectbox("비교 기준", ["전체", "지역별", "바이어별", "브랜드별", "코드별"], key="p_dim")
+
+    dim = None
+    group_key = None
+    if dim_label == "지역별":
+        dim = "region"
+        group_key = st.selectbox("지역 선택", opts['regions'], key="p_dim_region")
+    elif dim_label == "바이어별":
+        dim = "buyer"
+        group_key = st.selectbox("바이어 선택", opts['buyers'], key="p_dim_buyer")
+    elif dim_label == "브랜드별":
+        dim = "brand"
+        brand_opts = [b['brand'] for b in summary_by_brand(frows, top_n=30)]
+        group_key = st.selectbox("브랜드 선택", brand_opts, key="p_dim_brand")
+    elif dim_label == "코드별":
+        dim = "code"
+        code_opts = {f"{c} ({CODE_LABELS.get(c, c)})": CODE_LABELS.get(c, c) for c in opts['codes']}
+        sel = st.selectbox("코드 선택", list(code_opts.keys()), key="p_dim_code")
+        group_key = code_opts[sel]
+
+    years_for_trend = tuple(sorted(f_years)[-3:]) if f_years else (2024, 2025, 2026)
+    mc = monthly_compare(frows, dim=dim, group_filter={group_key} if group_key else None, years=years_for_trend)
+
+    target_group = group_key if group_key else "전체"
+    data = mc.get(target_group, {})
+    if data:
+        plot_rows = []
+        for y, mms in data.items():
+            for mm, rev in mms.items():
+                plot_rows.append({'연도': str(y), '월': mm, '수익': rev})
+        pdf = pd.DataFrame(plot_rows).sort_values(['연도', '월'])
+        fig = px.line(pdf, x='월', y='수익', color='연도', markers=True,
+                       title=f"{target_group} — 월별 수익 추이")
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("표시할 데이터가 없습니다.")
+
+    # ── 동기누적 비교 ─────────────────────────────────────────────
+    panel_title("🔁 동기누적 비교")
+    latest_year = max(opts['years']) if opts['years'] else None
+    if latest_year:
+        latest_months = sorted({
+            r['ym'][-2:] for r in rows if r['year'] == latest_year and r.get('ym') and len(r['ym']) == 7
+        })
+        if latest_months:
+            st.caption(f"기준: {latest_year}년 {latest_months[0]}~{latest_months[-1]}월 (동기간 누적)")
+            cum_years = tuple(sorted({y for y in (latest_year - 2, latest_year - 1, latest_year)}))
+            cum = cumulative_by_year(frows, latest_months, years=cum_years)
+            cum_df = pd.DataFrame([
+                {'연도': y, '누적건수': v['cnt'], '누적수익': v['rev'], '표시': fmt_money(v['rev'])}
+                for y, v in cum.items()
+            ])
+            st.dataframe(cum_df[['연도', '누적건수', '표시']].rename(columns={'표시': '누적수익'}),
+                          use_container_width=True)
+
+            yoy = yoy_comparison(frows, dim=dim, same_months=latest_months, top_n=10, sort_year=latest_year)
+            if yoy:
+                yoy_df = pd.DataFrame(yoy)
+                display_cols = ['label'] + [c for c in yoy_df.columns if c.startswith('y')] + ['growth_24_25', 'growth_25_26']
+                display_cols = [c for c in display_cols if c in yoy_df.columns]
+                st.dataframe(yoy_df[display_cols], use_container_width=True)
+        else:
+            st.info("최신 연도의 월별 데이터가 없습니다.")
+
+    # ── 목표 vs 실적 (131/152) ───────────────────────────────────
+    panel_title("🎯 목표 대비 실적 (131/152)")
+    plan_file = st.file_uploader("목표예산 파일 업로드 (선택, 미업로드시 기본 파일 사용)", type=["xlsx"], key="plan_upload")
+    if plan_file is not None:
+        plan_path = tmpdir / "plan_budget.xlsx"
+        plan_path.write_bytes(plan_file.getvalue())
+    else:
+        plan_path = DEFAULT_PLAN_PATH
+
+    if latest_year:
+        try:
+            plan = load_plan_budget(str(plan_path))
+            actual = actual_by_month_code(rows, latest_year)
+            plan_rows = []
+            for mm in [f"{i:02d}" for i in range(1, 13)]:
+                p = plan['monthly'].get(mm, {'131': 0, '152': 0, 'total': 0})
+                a = actual.get(mm, {'131': 0, '152': 0, 'total': 0})
+                plan_rows.append({
+                    '월': mm,
+                    '목표(131)': p['131'], '실적(131)': a['131'],
+                    '목표(152)': p['152'], '실적(152)': a['152'],
+                    '목표(합계)': p['total'], '실적(합계)': a['total'],
+                    '달성률(%)': round(a['total'] / p['total'] * 100, 1) if p['total'] else None,
+                })
+            plan_df = pd.DataFrame(plan_rows)
+
+            fig2 = go.Figure()
+            fig2.add_bar(x=plan_df['월'], y=plan_df['목표(합계)'], name='목표')
+            fig2.add_bar(x=plan_df['월'], y=plan_df['실적(합계)'], name='실적')
+            fig2.update_layout(barmode='group', title=f"{latest_year}년 월별 목표 대비 실적 (합계)")
+            st.plotly_chart(fig2, use_container_width=True)
+
+            st.dataframe(plan_df, use_container_width=True)
+        except Exception as e:
+            st.warning(f"목표예산 파일을 처리할 수 없습니다: {e}")
+
+    # ── 지역 × 코드 교차분석 ──────────────────────────────────────
+    panel_title("🗺️ 지역 × 코드 교차분석")
+    crosstab = region_code_crosstab(frows)
+    if crosstab:
+        ct_df = pd.DataFrame(crosstab).rename(columns={
+            'region': '지역', 'c131': '131(원단검사)', 'c152': '152(완제품검사)',
+            'other': '기타', 'total': '합계',
+        })
+        fig3 = go.Figure()
+        fig3.add_bar(x=ct_df['지역'], y=ct_df['131(원단검사)'], name='131(원단검사)')
+        fig3.add_bar(x=ct_df['지역'], y=ct_df['152(완제품검사)'], name='152(완제품검사)')
+        fig3.update_layout(barmode='stack', title="지역별 코드 구성")
+        st.plotly_chart(fig3, use_container_width=True)
+        st.dataframe(ct_df, use_container_width=True)
+    else:
+        st.info("표시할 데이터가 없습니다.")
+
+
+# ──────────────────────────────────────────────────────────────────
+# 상단 탭 구성
+# ──────────────────────────────────────────────────────────────────
+with st.expander("ℹ️ 사용 안내", expanded=False):
+    st.markdown("""
 - **📄 PDF → Excel 변환**: 불량보고서 PDF를 업로드하면 통합 Excel 파일로 변환합니다.
-- **📊 불량명 표준화 매핑**: 불량상세 데이터를 업로드하면 표준 불량명으로 자동 매핑하고, 미매핑/검토 항목을 수동으로 수정할 수 있습니다.
+- **📊 불량명 표준화**: 불량상세 데이터를 업로드하면 표준 불량명으로 자동 매핑하고, 미매핑/검토 항목을 수동으로 수정할 수 있습니다.
 - **🏭 공장·지역 분석**: (📊 탭에서 분석 완료 후) 공장별·지역별 불량률 랭킹, 추이, PDF 보고서를 확인합니다.
 - **📈 실적 분석**: 실적 rawdata를 업로드하면 KPI, 3개년 추이, 목표대비 실적, 지역×코드 교차분석을 확인합니다.
 
----
-**참고**
-- 업로드한 파일은 현재 접속 세션에서만 메모리에 보관되며, 다른 사용자와 공유되지 않습니다.
-- 브라우저를 새로고침하거나 세션이 종료되면 업로드/분석 내용은 초기화됩니다. 필요한 결과는 각 화면의 다운로드 버튼으로 저장해 두세요.
+업로드한 파일은 현재 접속 세션에서만 메모리에 보관되며, 다른 사용자와 공유되지 않습니다.
+브라우저를 새로고침하거나 세션이 종료되면 업로드/분석 내용은 초기화됩니다. 필요한 결과는 각 화면의 다운로드 버튼으로 저장해 두세요.
 """)
+
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📄 PDF → Excel 변환",
+    "📊 불량명 표준화",
+    "🏭 공장·지역 분석",
+    "📈 실적 분석",
+])
+
+with tab1:
+    render_pdf_tab()
+
+with tab2:
+    render_defect_tab()
+
+with tab3:
+    render_factory_tab()
+
+with tab4:
+    render_performance_tab()
