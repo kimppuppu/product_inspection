@@ -7,6 +7,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from datetime import datetime
+from collections import defaultdict
 
 import streamlit as st
 import pandas as pd
@@ -30,7 +31,7 @@ from core.performance_core import (
     load_performance, filter_rows, get_filter_options as get_perf_filter_options,
     summary_by_brand, region_code_crosstab, yoy_comparison, monthly_compare,
     cumulative_by_year, actual_by_month_code, load_plan_budget, CODE_LABELS,
-    summary_by_year,
+    summary_by_year, REGION_ORDER,
 )
 
 st.set_page_config(
@@ -771,6 +772,44 @@ def render_performance_tab():
 
             cnt_cols = ['월', '실적건수(131)', '실적건수(152)', '실적건수(합계)']
             st.dataframe(plan_df[cnt_cols], use_container_width=True)
+
+            # ── 지역별 실적 건수 비교 ──────────────────────────────
+            st.markdown("**지역별 월별 실적 건수 비교**")
+            cnt_code_label = st.selectbox(
+                "코드", ["합계", "131(원단검사)", "152(완제품검사)"], key="cnt_region_code"
+            )
+            cnt_code = {'합계': None, '131(원단검사)': '131', '152(완제품검사)': '152'}[cnt_code_label]
+
+            region_month_cnt: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+            for r in rows:
+                if r['year'] != latest_year or not r.get('ym') or len(r['ym']) != 7:
+                    continue
+                if cnt_code and r['code'] != cnt_code:
+                    continue
+                reg = r['region_label'] or '기타'
+                region_month_cnt[reg][r['ym'][-2:]] += 1
+
+            months_all = [f"{i:02d}" for i in range(1, 13)]
+            region_order_present = [r for r in REGION_ORDER if r in region_month_cnt] + \
+                                    [r for r in region_month_cnt if r not in REGION_ORDER]
+            if region_order_present:
+                fig2c = go.Figure()
+                for reg in region_order_present:
+                    fig2c.add_bar(
+                        x=months_all,
+                        y=[region_month_cnt[reg].get(mm, 0) for mm in months_all],
+                        name=reg,
+                    )
+                fig2c.update_layout(barmode='group', title=f"{latest_year}년 지역별 월별 실적 건수 ({cnt_code_label})")
+                st.plotly_chart(fig2c, use_container_width=True)
+
+                region_cnt_df = pd.DataFrame(
+                    {'월': months_all,
+                     **{reg: [region_month_cnt[reg].get(mm, 0) for mm in months_all] for reg in region_order_present}}
+                )
+                st.dataframe(region_cnt_df, use_container_width=True)
+            else:
+                st.info("표시할 데이터가 없습니다.")
         except Exception as e:
             st.warning(f"목표예산 파일을 처리할 수 없습니다: {e}")
 
