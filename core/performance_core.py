@@ -547,24 +547,31 @@ def summary_by_code(rows: list[dict]) -> list[dict]:
 
 
 def region_code_crosstab(rows: list[dict]) -> list[dict]:
-    """지역(8개 권역) × 코드(131 원단검사 / 152 완제품검사) 교차 집계"""
+    """지역(8개 권역) × 코드(131 원단검사 / 152 완제품검사) 교차 집계 (금액 + 건수)"""
     agg: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    cnt: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for r in rows:
         reg = r['region_label'] or '기타'
         c = r['code'] if r['code'] in CODE_LABELS else '기타'
         agg[reg][c] += revenue(r)
+        cnt[reg][c] += 1
 
     def _order(reg):
         return REGION_ORDER.index(reg) if reg in REGION_ORDER else len(REGION_ORDER)
 
     out = []
     for reg, d in sorted(agg.items(), key=lambda kv: _order(kv[0])):
+        c = cnt.get(reg, {})
         out.append({
             'region': reg,
             'c131':  d.get('131', 0),
             'c152':  d.get('152', 0),
-            'other': sum(v for c, v in d.items() if c not in ('131', '152')),
+            'other': sum(v for k, v in d.items() if k not in ('131', '152')),
             'total': sum(d.values()),
+            'cnt131':  c.get('131', 0),
+            'cnt152':  c.get('152', 0),
+            'cnt_other': sum(v for k, v in c.items() if k not in ('131', '152')),
+            'cnt_total': sum(c.values()),
         })
     return out
 
@@ -684,17 +691,22 @@ def monthly_compare(rows: list[dict], dim: str | None = None,
 
 
 def actual_by_month_code(rows: list[dict], year: int) -> dict:
-    """지정 연도의 월별 × 코드(131/152) 실적 — 목표대비용"""
+    """지정 연도의 월별 × 코드(131/152) 실적 — 목표대비용 (금액 + 건수)"""
     out: dict[str, dict] = {}
     for r in rows:
         if r['year'] != year or not r.get('ym') or len(r['ym']) != 7:
             continue
         mm = r['ym'][-2:]
-        d = out.setdefault(mm, {'131': 0, '152': 0, 'total': 0})
+        d = out.setdefault(mm, {
+            '131': 0, '152': 0, 'total': 0,
+            '131_cnt': 0, '152_cnt': 0, 'total_cnt': 0,
+        })
         rev = revenue(r)
         d['total'] += rev
+        d['total_cnt'] += 1
         if r['code'] in ('131', '152'):
             d[r['code']] += rev
+            d[r['code'] + '_cnt'] += 1
     return out
 
 
