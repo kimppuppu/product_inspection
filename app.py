@@ -176,6 +176,27 @@ if "tmpdir" not in st.session_state:
 tmpdir = Path(st.session_state.tmpdir)
 
 
+def run_mapping_analysis(raw_paths):
+    """표준불량명칭/불량상세 데이터를 읽어 매핑을 수행하고 세션에 저장합니다."""
+    if "std_path" not in st.session_state:
+        std_path = tmpdir / "표준불량명칭.xlsx"
+        shutil.copy(DEFAULT_STD_PATH, std_path)
+        st.session_state.std_path = str(std_path)
+
+    std_path = Path(st.session_state.std_path)
+
+    std_names, adict, used_sheet = load_standard(str(std_path))
+    raw_rows, skipped = load_raw(raw_paths)
+    cache, catmap = build_mapping(raw_rows, std_names, adict)
+
+    st.session_state.std_names = std_names
+    st.session_state.adict = adict
+    st.session_state.raw_rows = raw_rows
+    st.session_state.cache = cache
+    st.session_state.catmap = catmap
+    st.session_state.skipped = skipped
+
+
 # ──────────────────────────────────────────────────────────────────
 # 탭1: PDF → Excel 변환
 # ──────────────────────────────────────────────────────────────────
@@ -217,25 +238,51 @@ def render_pdf_tab():
 
                 if not records:
                     st.error("변환에 성공한 PDF가 없습니다.")
+                    st.session_state.pdf_convert_result = None
                 else:
                     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                     out_name = f"불량율_분석_통합_{ts}.xlsx"
-                    out_path = Path(tdir) / out_name
+                    out_path = tmpdir / out_name  # 세션 동안 유지되는 폴더에 저장
                     make_workbook(records, str(out_path))
 
-                    st.success(f"✅ 완료 — 성공 {len(records)}개 / 실패 {len(failed)}개")
-                    if failed:
-                        st.warning("실패한 파일: " + ", ".join(failed))
-
-                    st.download_button(
-                        "⬇️ 통합 Excel 다운로드",
-                        data=out_path.read_bytes(),
-                        file_name=out_name,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="primary",
-                    )
+                    st.session_state.pdf_convert_result = {
+                        "out_path": str(out_path),
+                        "out_name": out_name,
+                        "success_count": len(records),
+                        "failed": failed,
+                    }
+                    # 새 변환 결과가 생겼으므로 이전 분석 결과는 더 이상 자동으로 보여주지 않음
+                    st.session_state.pdf_analysis_done = False
     else:
         st.info("PDF 파일을 업로드해주세요.")
+
+    result = st.session_state.get("pdf_convert_result")
+    if result:
+        panel_title("변환 결과")
+        st.success(f"✅ 완료 — 성공 {result['success_count']}개 / 실패 {len(result['failed'])}개")
+        if result["failed"]:
+            st.warning("실패한 파일: " + ", ".join(result["failed"]))
+
+        out_path = Path(result["out_path"])
+        if out_path.exists():
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    "⬇️ Excel 다운로드",
+                    data=out_path.read_bytes(),
+                    file_name=result["out_name"],
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary",
+                    key="dl_pdf_result",
+                )
+            with col2:
+                if st.button("→ 이 파일로 바로 분석하기", key="pdf_to_analysis_btn"):
+                    with st.spinner("분석 중..."):
+                        run_mapping_analysis([str(out_path)])
+                    st.session_state.pdf_analysis_done = True
+
+            if st.session_state.get("pdf_analysis_done"):
+                st.success("✅ 분석이 완료되었습니다. 위의 '📊 불량명 표준화' 탭에서 결과를 확인하세요.")
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -276,16 +323,7 @@ def render_defect_tab():
                 p.write_bytes(f.getvalue())
                 raw_paths.append(str(p))
 
-            std_names, adict, used_sheet = load_standard(str(std_path))
-            raw_rows, skipped = load_raw(raw_paths)
-            cache, catmap = build_mapping(raw_rows, std_names, adict)
-
-            st.session_state.std_names = std_names
-            st.session_state.adict = adict
-            st.session_state.raw_rows = raw_rows
-            st.session_state.cache = cache
-            st.session_state.catmap = catmap
-            st.session_state.skipped = skipped
+            run_mapping_analysis(raw_paths)
 
         st.success("분석 완료!")
 
