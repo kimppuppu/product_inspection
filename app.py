@@ -81,9 +81,13 @@ st.markdown("""
     box-shadow: 0 2px 12px rgba(0,0,0,0.18);
 }
 .fiti-logo-wrap { display: flex; align-items: center; gap: 14px; }
+.fiti-logo-block { display: flex; align-items: center; gap: 10px; }
 .fiti-logo-text { font-size: 26px; font-weight: 900; letter-spacing: -1px; line-height: 1; }
 .fiti-logo-text .fi { color: #ffffff; }
 .fiti-logo-text .ti { color: var(--fiti-blue); }
+.fiti-logo-sub { display: flex; flex-direction: column; line-height: 1.3; }
+.fiti-logo-sub-kr { font-size: 13px; font-weight: 700; color: #ffffff; }
+.fiti-logo-sub-en { font-size: 9px; font-weight: 400; color: rgba(255,255,255,0.6); letter-spacing: 0.2px; }
 .fiti-divider { width: 1px; height: 34px; background: rgba(255,255,255,0.25); }
 .fiti-app-name { font-size: 17px; font-weight: 800; letter-spacing: -0.3px; }
 .fiti-app-sub { font-size: 11px; opacity: 0.65; margin-top: 2px; letter-spacing: 0.2px; }
@@ -149,11 +153,17 @@ st.markdown("""
 st.markdown("""
 <div class="fiti-header">
   <div class="fiti-logo-wrap">
-    <span class="fiti-logo-text"><span class="fi">FI</span><span class="ti">TI</span></span>
+    <div class="fiti-logo-block">
+      <span class="fiti-logo-text"><span class="fi">FI</span><span class="ti">TI</span></span>
+      <div class="fiti-logo-sub">
+        <span class="fiti-logo-sub-kr">FITI 시험연구원</span>
+        <span class="fiti-logo-sub-en">FITI Testing &amp; Research Institute</span>
+      </div>
+    </div>
     <div class="fiti-divider"></div>
     <div>
-      <div class="fiti-app-name">제품평가팀 불량률·실적 분석</div>
-      <div class="fiti-app-sub">Quality Inspection Analytics</div>
+      <div class="fiti-app-name">제품평가 업무관리</div>
+      <div class="fiti-app-sub">Product Quality Evaluation Management System</div>
     </div>
   </div>
 </div>
@@ -166,6 +176,14 @@ def panel_title(text: str):
 
 def fmt_money(v):
     return f"{v/1e8:,.2f}억원" if abs(v) >= 1e8 else f"{v:,.0f}원"
+
+
+def fmt_won(v):
+    """천단위 콤마 + '원' 단위 표시 (표 표시용, 억원 약식 변환 없이 전체 자리수 표시)"""
+    try:
+        return f"{int(round(v)):,}원"
+    except (TypeError, ValueError):
+        return v
 
 
 DEFAULT_STD_PATH = Path(__file__).resolve().parent / "표준불량명칭.xlsx"
@@ -673,16 +691,21 @@ def render_performance_tab():
         try:
             plan = load_plan_budget(str(plan_path))
             actual = actual_by_month_code(rows, latest_year)
+            empty_actual = {'131': 0, '152': 0, 'total': 0,
+                            '131_cnt': 0, '152_cnt': 0, 'total_cnt': 0}
             plan_rows = []
             for mm in [f"{i:02d}" for i in range(1, 13)]:
                 p = plan['monthly'].get(mm, {'131': 0, '152': 0, 'total': 0})
-                a = actual.get(mm, {'131': 0, '152': 0, 'total': 0})
+                a = actual.get(mm, empty_actual)
                 plan_rows.append({
                     '월': mm,
                     '목표(131)': p['131'], '실적(131)': a['131'],
                     '목표(152)': p['152'], '실적(152)': a['152'],
                     '목표(합계)': p['total'], '실적(합계)': a['total'],
                     '달성률(%)': round(a['total'] / p['total'] * 100, 1) if p['total'] else None,
+                    '실적건수(131)': a.get('131_cnt', 0),
+                    '실적건수(152)': a.get('152_cnt', 0),
+                    '실적건수(합계)': a.get('total_cnt', 0),
                 })
             plan_df = pd.DataFrame(plan_rows)
 
@@ -692,7 +715,22 @@ def render_performance_tab():
             fig2.update_layout(barmode='group', title=f"{latest_year}년 월별 목표 대비 실적 (합계)")
             st.plotly_chart(fig2, use_container_width=True)
 
-            st.dataframe(plan_df, use_container_width=True)
+            money_cols = ['목표(131)', '실적(131)', '목표(152)', '실적(152)', '목표(합계)', '실적(합계)']
+            plan_df_display = plan_df.copy()
+            for c in money_cols:
+                plan_df_display[c] = plan_df_display[c].map(fmt_won)
+            st.dataframe(plan_df_display, use_container_width=True)
+
+            # ── 건수 비교 ────────────────────────────────────────
+            st.markdown("**월별 실적 건수 비교 (131 / 152)**")
+            fig2b = go.Figure()
+            fig2b.add_bar(x=plan_df['월'], y=plan_df['실적건수(131)'], name='131(원단검사) 건수')
+            fig2b.add_bar(x=plan_df['월'], y=plan_df['실적건수(152)'], name='152(완제품검사) 건수')
+            fig2b.update_layout(barmode='group', title=f"{latest_year}년 월별 실적 건수")
+            st.plotly_chart(fig2b, use_container_width=True)
+
+            cnt_cols = ['월', '실적건수(131)', '실적건수(152)', '실적건수(합계)']
+            st.dataframe(plan_df[cnt_cols], use_container_width=True)
         except Exception as e:
             st.warning(f"목표예산 파일을 처리할 수 없습니다: {e}")
 
@@ -700,16 +738,30 @@ def render_performance_tab():
     panel_title("🗺️ 지역 × 코드 교차분석")
     crosstab = region_code_crosstab(frows)
     if crosstab:
-        ct_df = pd.DataFrame(crosstab).rename(columns={
+        ct_df = pd.DataFrame(crosstab)
+        money_df = ct_df[['region', 'c131', 'c152', 'other', 'total']].rename(columns={
             'region': '지역', 'c131': '131(원단검사)', 'c152': '152(완제품검사)',
             'other': '기타', 'total': '합계',
         })
+        cnt_df = ct_df[['region', 'cnt131', 'cnt152', 'cnt_other', 'cnt_total']].rename(columns={
+            'region': '지역', 'cnt131': '131(원단검사)', 'cnt152': '152(완제품검사)',
+            'cnt_other': '기타', 'cnt_total': '합계',
+        })
+
         fig3 = go.Figure()
-        fig3.add_bar(x=ct_df['지역'], y=ct_df['131(원단검사)'], name='131(원단검사)')
-        fig3.add_bar(x=ct_df['지역'], y=ct_df['152(완제품검사)'], name='152(완제품검사)')
-        fig3.update_layout(barmode='stack', title="지역별 코드 구성")
+        fig3.add_bar(x=money_df['지역'], y=money_df['131(원단검사)'], name='131(원단검사)')
+        fig3.add_bar(x=money_df['지역'], y=money_df['152(완제품검사)'], name='152(완제품검사)')
+        fig3.update_layout(barmode='stack', title="지역별 코드 구성 (금액)")
         st.plotly_chart(fig3, use_container_width=True)
-        st.dataframe(ct_df, use_container_width=True)
+
+        st.markdown("**금액 (원)**")
+        money_df_display = money_df.copy()
+        for c in ['131(원단검사)', '152(완제품검사)', '기타', '합계']:
+            money_df_display[c] = money_df_display[c].map(fmt_won)
+        st.dataframe(money_df_display, use_container_width=True)
+
+        st.markdown("**건수**")
+        st.dataframe(cnt_df, use_container_width=True)
     else:
         st.info("표시할 데이터가 없습니다.")
 
