@@ -674,7 +674,11 @@ def render_performance_tab():
                 yoy_df = pd.DataFrame(yoy)
                 display_cols = ['label'] + [c for c in yoy_df.columns if c.startswith('y')] + ['growth_24_25', 'growth_25_26']
                 display_cols = [c for c in display_cols if c in yoy_df.columns]
-                st.dataframe(yoy_df[display_cols], use_container_width=True)
+                yoy_df_display = yoy_df[display_cols].copy()
+                for c in yoy_df_display.columns:
+                    if c.startswith('y'):
+                        yoy_df_display[c] = yoy_df_display[c].map(fmt_won)
+                st.dataframe(yoy_df_display, use_container_width=True)
         else:
             st.info("최신 연도의 월별 데이터가 없습니다.")
 
