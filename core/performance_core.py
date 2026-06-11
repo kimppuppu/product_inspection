@@ -801,5 +801,11 @@ def get_filter_options(rows: list[dict]) -> dict:
     years   = sorted({r['year'] for r in rows if r['year']})
     regions = [r for r in REGION_ORDER if r in {x['region_label'] for x in rows if x['region_label']}]
     codes   = sorted({r['code'] for r in rows if r['code']})
-    buyers  = sorted({r['buyer'] for r in rows if r['buyer']})[:50]
+
+    buyer_rev: dict[str, int] = defaultdict(int)
+    for r in rows:
+        if r['buyer']:
+            buyer_rev[r['buyer']] += revenue(r)
+    buyers = [b for b, _ in sorted(buyer_rev.items(), key=lambda kv: -kv[1])[:30]]
+
     return {'years': years, 'regions': regions, 'codes': codes, 'buyers': buyers}
