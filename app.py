@@ -186,6 +186,36 @@ def fmt_won(v):
         return v
 
 
+def fmt_won_kr(v):
+    """억/만원 단위의 한국어 표기로 변환 (차트 축/툴팁 라벨용, 예: 7억원, 7,500만원, 320만원)"""
+    try:
+        v = int(round(v))
+    except (TypeError, ValueError):
+        return str(v)
+    sign = '-' if v < 0 else ''
+    v = abs(v)
+    if v == 0:
+        return "0원"
+    eok, rem = divmod(v, 100_000_000)
+    man = rem // 10_000
+    parts = []
+    if eok:
+        parts.append(f"{eok}억")
+    if man:
+        parts.append(f"{man:,}만")
+    if not parts:
+        return f"{sign}{v:,}원"
+    return f"{sign}{''.join(parts)}원"
+
+
+def fmt_pct1(v):
+    """소수점 첫째자리까지 % 표시"""
+    try:
+        return f"{float(v):.1f}%"
+    except (TypeError, ValueError):
+        return "-"
+
+
 DEFAULT_STD_PATH = Path(__file__).resolve().parent / "표준불량명칭.xlsx"
 DEFAULT_PLAN_PATH = Path(__file__).resolve().parent / "plan_budget.xlsx"
 
@@ -647,6 +677,10 @@ def render_performance_tab():
         pdf = pd.DataFrame(plot_rows).sort_values(['연도', '월'])
         fig = px.line(pdf, x='월', y='수익', color='연도', markers=True,
                        title=f"{target_group} — 월별 수익 추이")
+        ymax = pdf['수익'].max() if not pdf.empty else 0
+        ticks = [ymax * i / 5 for i in range(6)]
+        fig.update_yaxes(tickmode='array', tickvals=ticks,
+                          ticktext=[fmt_won_kr(t) for t in ticks], title='수익')
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("표시할 데이터가 없습니다.")
@@ -678,6 +712,8 @@ def render_performance_tab():
                 for c in yoy_df_display.columns:
                     if c.startswith('y'):
                         yoy_df_display[c] = yoy_df_display[c].map(fmt_won)
+                    elif c.startswith('growth'):
+                        yoy_df_display[c] = yoy_df_display[c].map(fmt_pct1)
                 st.dataframe(yoy_df_display, use_container_width=True)
         else:
             st.info("최신 연도의 월별 데이터가 없습니다.")
