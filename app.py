@@ -701,8 +701,9 @@ def render_performance_tab():
                 {'연도': y, '누적건수': v['cnt'], '누적수익': v['rev'], '표시': fmt_money(v['rev'])}
                 for y, v in cum.items()
             ])
-            st.dataframe(cum_df[['연도', '누적건수', '표시']].rename(columns={'표시': '누적수익'}),
-                          use_container_width=True)
+            cum_df_display = cum_df[['연도', '누적건수', '표시']].rename(columns={'표시': '누적수익'}).copy()
+            cum_df_display['누적건수'] = cum_df_display['누적건수'].map('{:,}'.format)
+            st.dataframe(cum_df_display, use_container_width=True)
 
             yoy = yoy_comparison(frows, dim=dim, same_months=latest_months, top_n=10, sort_year=latest_year)
             if yoy:
@@ -762,16 +763,37 @@ def render_performance_tab():
                 plan_df_display[c] = plan_df_display[c].map(fmt_won)
             st.dataframe(plan_df_display, use_container_width=True)
 
-            # ── 건수 비교 ────────────────────────────────────────
-            st.markdown("**월별 실적 건수 비교 (131 / 152)**")
+            # ── 건수 비교 (전년 대비) ────────────────────────────────
+            prev_year = latest_year - 1
+            actual_prev = actual_by_month_code(rows, prev_year)
+            months_mm = plan_df['월'].tolist()
+
+            st.markdown(f"**월별 실적 건수 비교 (131 / 152, {prev_year}년 vs {latest_year}년)**")
             fig2b = go.Figure()
-            fig2b.add_bar(x=plan_df['월'], y=plan_df['실적건수(131)'], name='131(원단검사) 건수')
-            fig2b.add_bar(x=plan_df['월'], y=plan_df['실적건수(152)'], name='152(완제품검사) 건수')
-            fig2b.update_layout(barmode='group', title=f"{latest_year}년 월별 실적 건수")
+            fig2b.add_bar(x=months_mm, y=[actual_prev.get(mm, empty_actual)['131_cnt'] for mm in months_mm],
+                          name=f'{prev_year} 131(원단검사)')
+            fig2b.add_bar(x=months_mm, y=[actual_prev.get(mm, empty_actual)['152_cnt'] for mm in months_mm],
+                          name=f'{prev_year} 152(완제품검사)')
+            fig2b.add_bar(x=months_mm, y=plan_df['실적건수(131)'], name=f'{latest_year} 131(원단검사)')
+            fig2b.add_bar(x=months_mm, y=plan_df['실적건수(152)'], name=f'{latest_year} 152(완제품검사)')
+            fig2b.update_layout(barmode='group', title=f"{prev_year}년 vs {latest_year}년 월별 실적 건수")
             st.plotly_chart(fig2b, use_container_width=True)
 
-            cnt_cols = ['월', '실적건수(131)', '실적건수(152)', '실적건수(합계)']
-            st.dataframe(plan_df[cnt_cols], use_container_width=True)
+            cnt_compare_rows = []
+            for mm in months_mm:
+                cur = actual.get(mm, empty_actual)
+                prv = actual_prev.get(mm, empty_actual)
+                cnt_compare_rows.append({
+                    '월': mm,
+                    f'{prev_year}_131': prv.get('131_cnt', 0), f'{latest_year}_131': cur.get('131_cnt', 0),
+                    f'{prev_year}_152': prv.get('152_cnt', 0), f'{latest_year}_152': cur.get('152_cnt', 0),
+                    f'{prev_year}_합계': prv.get('total_cnt', 0), f'{latest_year}_합계': cur.get('total_cnt', 0),
+                })
+            cnt_compare_df = pd.DataFrame(cnt_compare_rows)
+            cnt_compare_display = cnt_compare_df.copy()
+            for c in cnt_compare_display.columns[1:]:
+                cnt_compare_display[c] = cnt_compare_display[c].map('{:,}'.format)
+            st.dataframe(cnt_compare_display, use_container_width=True)
 
             # ── 지역별 실적 건수 비교 ──────────────────────────────
             st.markdown("**지역별 월별 실적 건수 비교**")
@@ -807,7 +829,10 @@ def render_performance_tab():
                     {'월': months_all,
                      **{reg: [region_month_cnt[reg].get(mm, 0) for mm in months_all] for reg in region_order_present}}
                 )
-                st.dataframe(region_cnt_df, use_container_width=True)
+                region_cnt_display = region_cnt_df.copy()
+                for reg in region_order_present:
+                    region_cnt_display[reg] = region_cnt_display[reg].map('{:,}'.format)
+                st.dataframe(region_cnt_display, use_container_width=True)
             else:
                 st.info("표시할 데이터가 없습니다.")
         except Exception as e:
@@ -831,6 +856,10 @@ def render_performance_tab():
         fig3.add_bar(x=money_df['지역'], y=money_df['131(원단검사)'], name='131(원단검사)')
         fig3.add_bar(x=money_df['지역'], y=money_df['152(완제품검사)'], name='152(완제품검사)')
         fig3.update_layout(barmode='stack', title="지역별 코드 구성 (금액)")
+        ymax3 = money_df['합계'].max() if not money_df.empty else 0
+        ticks3 = [ymax3 * i / 5 for i in range(6)]
+        fig3.update_yaxes(tickmode='array', tickvals=ticks3,
+                           ticktext=[fmt_won_kr(t) for t in ticks3], title='금액')
         st.plotly_chart(fig3, use_container_width=True)
 
         st.markdown("**금액 (원)**")
@@ -840,7 +869,10 @@ def render_performance_tab():
         st.dataframe(money_df_display, use_container_width=True)
 
         st.markdown("**건수**")
-        st.dataframe(cnt_df, use_container_width=True)
+        cnt_df_display = cnt_df.copy()
+        for c in ['131(원단검사)', '152(완제품검사)', '기타', '합계']:
+            cnt_df_display[c] = cnt_df_display[c].map('{:,}'.format)
+        st.dataframe(cnt_df_display, use_container_width=True)
     else:
         st.info("표시할 데이터가 없습니다.")
 
