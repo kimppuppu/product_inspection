@@ -27,6 +27,7 @@ from core.factory_ranking import (
 )
 from core.ai_comment import get_comment
 from core.pdf_report import generate_factory_pdf
+from core.word_report import generate_word_report
 from core.performance_core import (
     load_performance, filter_rows, get_filter_options as get_perf_filter_options,
     summary_by_brand, region_code_crosstab, yoy_comparison, monthly_compare,
@@ -473,6 +474,22 @@ def render_defect_tab():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="dl_std",
             )
+
+        st.markdown("---")
+        panel_title("📄 불량률 분석 보고서 (Word)")
+        st.markdown("전체·업체별·공장별 불량률과 세부 불량 유형을 포함한 Word 보고서를 생성합니다.  \n※ 상위 5개 불량 유형 + 기타 · 차트 포함")
+        try:
+            word_bytes = generate_word_report(raw_rows, cache)
+            today = datetime.now().strftime("%Y%m%d")
+            st.download_button(
+                "📄 Word 보고서 다운로드",
+                data=word_bytes,
+                file_name=f"불량률분석보고서_{today}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="dl_word",
+            )
+        except Exception as e:
+            st.error(f"보고서 생성 오류: {e}")
 
         st.info("💡 이 화면에서 분석한 데이터는 '🏭 공장·지역 분석' 탭에서 그대로 사용할 수 있습니다.")
     elif not raw_files:
