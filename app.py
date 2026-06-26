@@ -273,19 +273,13 @@ def render_pdf_tab():
     panel_title("📄 불량보고서 PDF → Excel 변환")
     st.markdown("불량보고서 PDF 파일들을 업로드하면 통합 Excel 파일로 변환합니다.")
 
-    PDF_MAX = 1000
-    PDF_BATCH = 50  # 한 번에 처리할 최대 개수
-
-    # 누적 PDF 저장소 초기화
-    if "pdf_accumulated" not in st.session_state:
-        st.session_state.pdf_accumulated = {}
-    # 배치 처리용 상태
-    if "pdf_pending_names" not in st.session_state:
-        st.session_state.pdf_pending_names = []   # 아직 처리 안 된 파일명 목록
-    if "pdf_partial_records" not in st.session_state:
-        st.session_state.pdf_partial_records = []  # 이미 변환된 records 누적
-    if "pdf_partial_failed" not in st.session_state:
-        st.session_state.pdf_partial_failed = []
+    # 결과만 저장 (바이트는 업로드 즉시 처리 후 버림)
+    if "pdf_records" not in st.session_state:
+        st.session_state.pdf_records = []   # 파싱된 레코드 목록
+    if "pdf_failed" not in st.session_state:
+        st.session_state.pdf_failed = []    # 실패 파일명
+    if "pdf_seen" not in st.session_state:
+        st.session_state.pdf_seen = set()   # 중복 방지용 파일명 집합
 
     new_pdfs = st.file_uploader(
         "PDF 파일 업로드 (여러 번 나눠서 추가 가능, 최대 1000개)",
@@ -294,124 +288,73 @@ def render_pdf_tab():
         key="pdf_uploader",
     )
 
+    # 새로 업로드된 파일 → 즉시 파싱 → 바이트 버림
     if new_pdfs:
-        added = 0
-        for f in new_pdfs:
-            if len(st.session_state.pdf_accumulated) >= PDF_MAX:
-                st.warning(f"최대 {PDF_MAX}개 한도에 도달했습니다.")
-                break
-            if f.name not in st.session_state.pdf_accumulated:
-                st.session_state.pdf_accumulated[f.name] = f.getvalue()
-                added += 1
-        if added:
-            st.toast(f"{added}개 추가됨 (누적: {len(st.session_state.pdf_accumulated)}개)")
+        new_files = [f for f in new_pdfs if f.name not in st.session_state.pdf_seen]
+        if new_files:
+            prog = st.progress(0.0)
+            status = st.empty()
+            with tempfile.TemporaryDirectory() as tdir:
+                for i, f in enumerate(new_files, 1):
+                    if len(st.session_state.pdf_records) + len(st.session_state.pdf_failed) >= 1000:
+                        st.warning("최대 1000개 한도에 도달했습니다.")
+                        break
+                    status.write(f"({i}/{len(new_files)}) 변환 중: {f.name}")
+                    tmp_path = Path(tdir) / f.name
+                    tmp_path.write_bytes(f.getvalue())  # 임시 파일로만 씀
+                    try:
+                        rec = parse_pdf(str(tmp_path))
+                        st.session_state.pdf_records.append(rec)
+                    except Exception as e:
+                        st.session_state.pdf_failed.append(f.name)
+                    st.session_state.pdf_seen.add(f.name)
+                    prog.progress(i / len(new_files))
+            status.empty()
+            prog.empty()
+            added = len(new_files)
+            st.toast(f"{added}개 변환 완료 (누적: {len(st.session_state.pdf_records)}개 성공)")
 
-    pdf_total = len(st.session_state.pdf_accumulated)
-    pending_count = len(st.session_state.pdf_pending_names)
-    partial_done = len(st.session_state.pdf_partial_records) + len(st.session_state.pdf_partial_failed)
+    total_rec = len(st.session_state.pdf_records)
+    total_fail = len(st.session_state.pdf_failed)
 
-    if pdf_total > 0:
-        st.info(f"📂 누적 PDF: **{pdf_total}개** (최대 {PDF_MAX}개)")
-        with st.expander(f"누적 파일 목록 ({pdf_total}개)"):
-            for name in sorted(st.session_state.pdf_accumulated.keys()):
-                st.caption(f"• {name}")
+    if total_rec + total_fail > 0:
+        st.info(f"📂 누적: **{total_rec}개 성공** / {total_fail}개 실패 (최대 1000개)")
         col_a, col_b = st.columns([3, 1])
         with col_a:
-            convert_btn = st.button("🚀 변환 시작", type="primary", key="pdf_convert_btn")
+            make_btn = st.button("📥 Excel 파일 생성", type="primary", key="pdf_make_btn",
+                                 disabled=(total_rec == 0))
         with col_b:
-            if st.button("🗑️ 목록 초기화", key="pdf_clear_btn"):
-                st.session_state.pdf_accumulated = {}
-                st.session_state.pdf_pending_names = []
-                st.session_state.pdf_partial_records = []
-                st.session_state.pdf_partial_failed = []
+            if st.button("🗑️ 초기화", key="pdf_clear_btn"):
+                st.session_state.pdf_records = []
+                st.session_state.pdf_failed = []
+                st.session_state.pdf_seen = set()
+                st.session_state.pdf_convert_result = None
                 st.rerun()
+        if total_fail > 0:
+            with st.expander(f"실패 목록 ({total_fail}개)"):
+                for name in st.session_state.pdf_failed:
+                    st.caption(f"❌ {name}")
     else:
         st.info("PDF 파일을 업로드해주세요. 여러 번 나눠서 추가할 수 있습니다.")
-        convert_btn = False
+        make_btn = False
 
-    # 배치 진행 중 표시
-    if pending_count > 0:
-        st.info(f"⏳ 변환 진행 중: {partial_done}개 완료, {pending_count}개 남음")
-        next_batch_btn = st.button(
-            f"▶️ 다음 {min(PDF_BATCH, pending_count)}개 변환",
-            type="primary", key="pdf_next_batch_btn"
-        )
-    else:
-        next_batch_btn = False
-
-    def _run_batch(names_batch):
-        """names_batch 파일들을 변환해 partial_records/failed에 누적. 처리 후 bytes 해제."""
-        progress = st.progress(0.0)
-        status = st.empty()
-        log_box = st.container(height=200)
-        total = len(names_batch)
-        with tempfile.TemporaryDirectory() as tdir:
-            for i, fname in enumerate(names_batch, 1):
-                status.write(f"({i}/{total}) 변환 중: {fname}")
-                fbytes = st.session_state.pdf_accumulated.pop(fname, None)  # 꺼내면서 즉시 해제
-                if fbytes is None:
-                    st.session_state.pdf_partial_failed.append(fname)
-                    progress.progress(i / total)
-                    continue
-                tmp_path = Path(tdir) / fname
-                tmp_path.write_bytes(fbytes)
-                del fbytes  # 명시적 메모리 해제
-                try:
-                    rec = parse_pdf(str(tmp_path))
-                    st.session_state.pdf_partial_records.append(rec)
-                    log_box.write(f"✅ {rec.get('REPORT NO.', '')} / {rec.get('공장', '')}")
-                except Exception as e:
-                    st.session_state.pdf_partial_failed.append(fname)
-                    log_box.write(f"❌ 실패: {fname} — {e}")
-                progress.progress(i / total)
-        status.empty()
-
-    if convert_btn and pdf_total > 0:
-        # 변환 시작 — pending 목록 초기화 후 첫 배치 실행
-        all_names = sorted(st.session_state.pdf_accumulated.keys())
-        st.session_state.pdf_pending_names = all_names[PDF_BATCH:]  # 남은 것
-        st.session_state.pdf_partial_records = []
-        st.session_state.pdf_partial_failed = []
-        _run_batch(all_names[:PDF_BATCH])
-        st.rerun()
-
-    if next_batch_btn and pending_count > 0:
-        batch = st.session_state.pdf_pending_names[:PDF_BATCH]
-        st.session_state.pdf_pending_names = st.session_state.pdf_pending_names[PDF_BATCH:]
-        _run_batch(batch)
-        st.rerun()
-
-    # 모든 배치 완료 시 Excel 생성
-    remaining = len(st.session_state.pdf_pending_names)
-    records = st.session_state.pdf_partial_records
-    failed_list = st.session_state.pdf_partial_failed
-    if partial_done > 0 and remaining == 0 and not st.session_state.get("pdf_convert_result"):
-        if not records:
-            st.error("변환에 성공한 PDF가 없습니다.")
-            st.session_state.pdf_convert_result = None
-        else:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            out_name = f"불량율_분석_통합_{ts}.xlsx"
-            out_path = tmpdir / out_name
-            make_workbook(records, str(out_path))
-            st.session_state.pdf_convert_result = {
-                "out_path": str(out_path),
-                "out_name": out_name,
-                "success_count": len(records),
-                "failed": failed_list,
-            }
-            st.session_state.pdf_analysis_done = False
-            st.session_state.pdf_accumulated = {}
-            st.session_state.pdf_partial_records = []
-            st.session_state.pdf_partial_failed = []
-            st.rerun()
+    if make_btn and total_rec > 0:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_name = f"불량율_분석_통합_{ts}.xlsx"
+        out_path = tmpdir / out_name
+        make_workbook(st.session_state.pdf_records, str(out_path))
+        st.session_state.pdf_convert_result = {
+            "out_path": str(out_path),
+            "out_name": out_name,
+            "success_count": total_rec,
+            "failed": st.session_state.pdf_failed,
+        }
+        st.session_state.pdf_analysis_done = False
 
     result = st.session_state.get("pdf_convert_result")
     if result:
         panel_title("변환 결과")
         st.success(f"✅ 완료 — 성공 {result['success_count']}개 / 실패 {len(result['failed'])}개")
-        if result["failed"]:
-            st.warning("실패한 파일: " + ", ".join(result["failed"]))
 
         out_path = Path(result["out_path"])
         if out_path.exists():
@@ -432,7 +375,8 @@ def render_pdf_tab():
                     st.session_state.pdf_analysis_done = True
 
         if st.session_state.get("pdf_analysis_done"):
-            st.success("✅ 분석이 완료되었습니다. 위의 '📊 불량명 표준화' 탭에서 결과를 확인하세요.")
+            st.success("✅ 분석이 완료되었습니다. '📊 불량명 표준화' 탭에서 결과를 확인하세요.")
+
 
 def render_defect_tab():
     panel_title("📊 불량명 표준화 매핑")
