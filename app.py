@@ -41,16 +41,16 @@ except Exception as _e:
     import traceback
     _IMPORT_ERROR = traceback.format_exc()
 
-if _IMPORT_ERROR:
-    st.error("앱 시작 오류 — 아래 내용을 개발자에게 전달해주세요:")
-    st.code(_IMPORT_ERROR)
-    st.stop()
-
 st.set_page_config(
     page_title="제품평가 업무관리",
     page_icon="📋",
     layout="wide",
 )
+
+if _IMPORT_ERROR:
+    st.error("앱 시작 오류 — 아래 내용을 개발자에게 전달해주세요:")
+    st.code(_IMPORT_ERROR)
+    st.stop()
 
 # ──────────────────────────────────────────────────────────────────
 # FITI 브랜딩 — 커스텀 CSS
