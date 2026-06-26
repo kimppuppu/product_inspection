@@ -356,6 +356,171 @@ def build_mapping(raw_rows, std_names, adict, log_fn=None):
     if log_fn: log_fn(f"매핑 완료: {len(uraw)}개 불량명 처리")
     return cache, catmap
 
+# ── 품목 유형 분류 ────────────────────────────────────────────────
+_신발_KW = ['신발', 'SHOE', 'SHOES', 'SNEAKER', 'BOOT', 'BOOTS', 'SANDAL',
+            '부츠', '샌들', '스니커', 'SLIPPER', '슬리퍼', 'LOAFER', 'HEEL']
+_잡화_KW = ['가방', 'BAG', 'BAGS', '지갑', 'WALLET', '파우치', 'POUCH',
+            '백팩', 'BACKPACK', '모자', 'HAT', 'CAP', '머플러', 'MUFFLER',
+            'SCARF', '스카프', '장갑', 'GLOVE', 'GLOVES', '벨트', 'BELT',
+            '우산', 'UMBRELLA', '숄더백', 'TOTE', '클러치', 'CLUTCH']
+
+def classify_item_type(item_str: str) -> str:
+    """품명(item) 필드로 의류/잡화/신발 판별. 기본값 의류."""
+    if not item_str:
+        return '의류'
+    s = str(item_str).upper()
+    for kw in _신발_KW:
+        if kw in s:
+            return '신발'
+    for kw in _잡화_KW:
+        if kw in s:
+            return '잡화'
+    return '의류'
+
+
+def _load_sheet_names(wb, ptype: str):
+    """잡화 파일에서 시트를 ptype(잡화/신발)에 맞게 선택."""
+    for sn in wb.sheetnames:
+        snu = sn.upper()
+        if ptype == '신발' and '신발' in sn:
+            return wb[sn]
+        if ptype == '잡화' and ('가방' in sn or '지갑' in sn or '잡화' in sn):
+            return wb[sn]
+    return wb[wb.sheetnames[0]]
+
+
+def load_standard_sheet(wb, ws) -> tuple:
+    """워크시트 하나를 (names, adict) 로 파싱."""
+    names, adict, cat = [], {}, None
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if len(row) < 3:
+            continue
+        c, no, name = row[0], row[1], row[2]
+        desc = row[6] if len(row) > 6 else None
+        desc_str = _rich_text_to_str(desc)
+        if c:
+            cat = c
+        if not name:
+            continue
+        name = str(name).strip()
+        if not name:
+            continue
+        names.append((name, cat, desc_str))
+        adict[name] = name
+        if desc_str:
+            for cp in re.split(r'[,\n]', desc_str):
+                for p in cp.split('/'):
+                    p = p.strip()
+                    if p and len(p) >= 2:
+                        adict[p] = name
+    return names, adict
+
+
+def load_standard_typed(data_dir: str) -> dict:
+    """
+    data_dir 에서 의류/잡화/신발 표준불량명칭 로드.
+    반환: {'의류': (names, adict), '잡화': (names, adict), '신발': (names, adict)}
+    없는 파일은 기존 표준불량명칭.xlsx 로 폴백.
+    """
+    import os
+    result = {}
+    의류_path = os.path.join(data_dir, '[의류]표준불량명칭.xlsx')
+    잡화_path = os.path.join(data_dir, '[잡화]표준불량명칭.xlsx')
+    fallback   = os.path.join(data_dir, '..', '표준불량명칭.xlsx')
+
+    # 의류
+    if os.path.exists(의류_path):
+        wb = openpyxl.load_workbook(의류_path, data_only=True)
+        ws = wb[wb.sheetnames[0]]
+        result['의류'] = load_standard_sheet(wb, ws)
+    elif os.path.exists(fallback):
+        wb = openpyxl.load_workbook(fallback, data_only=True)
+        ws = find_std_sheet(wb)
+        result['의류'] = load_standard_sheet(wb, ws)
+
+    # 잡화 / 신발
+    if os.path.exists(잡화_path):
+        wb = openpyxl.load_workbook(잡화_path, data_only=True)
+        for ptype in ['잡화', '신발']:
+            ws = _load_sheet_names(wb, ptype)
+            result[ptype] = load_standard_sheet(wb, ws)
+
+    return result
+
+
+def build_mapping_typed(raw_rows: list, std_by_type: dict, log_fn=None) -> tuple:
+    """
+    품목 유형(의류/잡화/신발)별로 다른 표준명칭을 사용해 매핑.
+    raw_rows 각 행에 'product_type' 필드 추가(in-place).
+    반환: (cache, catmap)  — 기존 build_mapping 과 동일한 인터페이스.
+    """
+    from collections import defaultdict
+
+    # 각 행에 product_type 부여
+    for r in raw_rows:
+        r['product_type'] = classify_item_type(r.get('item', ''))
+
+    # defect_raw → 대표 product_type (첫 등장 기준)
+    raw_to_type = {}
+    for r in raw_rows:
+        if r['defect_raw'] not in raw_to_type:
+            raw_to_type[r['defect_raw']] = r['product_type']
+
+    # product_type 별로 고유 defect_raw 그룹화
+    type_to_raws = defaultdict(list)
+    for raw, ptype in raw_to_type.items():
+        type_to_raws[ptype].append(raw)
+
+    cache = {}
+    catmap = {}
+    fallback_type = '의류' if '의류' in std_by_type else next(iter(std_by_type))
+
+    total = len(raw_to_type)
+    done = 0
+
+    for ptype, raws in type_to_raws.items():
+        actual_type = ptype if ptype in std_by_type else fallback_type
+        std_names, adict = std_by_type[actual_type]
+        slist  = [s[0] for s in std_names]
+        nalias = {norm(k): v for k, v in adict.items()}
+        catmap.update({s[0]: s[1] for s in std_names})
+
+        def map_one(part, _adict=adict, _nalias=nalias, _slist=slist):
+            part = part.strip()
+            if not part: return None, 0, '-', False, ''
+            if part in _adict: return _adict[part], 100, '정확일치', False, ''
+            pn = norm(part)
+            if pn in _nalias: return _nalias[pn], 100, '정확일치(정규화)', False, ''
+            bs, bv = 0, None
+            for k, v in _adict.items():
+                kn = norm(k)
+                if len(kn) < 2: continue
+                if kn in pn or pn in kn:
+                    sc = len(min(kn, pn, key=len)) / len(max(kn, pn, key=len)) * 100
+                    if sc > bs and sc >= TH_HIGH: bs, bv = sc, v
+            if bv: return bv, int(bs), '별칭포함', False, ''
+            nk = [n for n in _slist if '기타' not in n]
+            ki = [n for n in _slist if '기타' in n]
+            bn, bsc = None, 0
+            for cands in [nk, ki]:
+                for n in cands:
+                    sc = fuzz.token_sort_ratio(part, n)
+                    if sc > bsc: bsc, bn = sc, n
+                if bsc >= TH_HIGH: break
+            if bsc >= TH_HIGH:   return bn, bsc, '퍼지매핑', False, ''
+            elif bsc >= TH_LOW:  return bn, bsc, '퍼지매핑', True, '수동검토필요'
+            else:                return None, bsc, '미매핑', True, '적합한표준명없음'
+
+        for raw in raws:
+            cache[raw] = [(p,) + map_one(p) for p in split_defect(raw)]
+            done += 1
+            if log_fn and done % 50 == 0:
+                log_fn(f"매핑 중... {done}/{total}")
+
+    if log_fn: log_fn(f"매핑 완료: {total}개 불량명 처리")
+    return cache, catmap
+
+
 
 # ── 매핑 결과를 JSON 직렬화 가능한 리스트로 변환 ────────────────────
 def mapping_to_records(raw_rows, cache, catmap):

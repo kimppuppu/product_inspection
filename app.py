@@ -263,17 +263,52 @@ def render_pdf_tab():
     panel_title("📄 불량보고서 PDF → Excel 변환")
     st.markdown("불량보고서 PDF 파일들을 업로드하면 통합 Excel 파일로 변환합니다.")
 
-    uploaded_files = st.file_uploader(
-        "PDF 파일 업로드 (여러 개 선택 가능)",
+    PDF_MAX = 1000
+
+    if "pdf_accumulated" not in st.session_state:
+        st.session_state.pdf_accumulated = {}  # {filename: bytes}
+
+    new_pdfs = st.file_uploader(
+        "PDF 파일 업로드 (여러 번 나눠서 추가 가능, 최대 1000개)",
         type=["pdf"],
         accept_multiple_files=True,
         key="pdf_uploader",
     )
 
-    if uploaded_files:
-        st.write(f"업로드된 파일: {len(uploaded_files)}개")
+    if new_pdfs:
+        added = 0
+        for f in new_pdfs:
+            if len(st.session_state.pdf_accumulated) >= PDF_MAX:
+                st.warning(f"최대 {PDF_MAX}개 한도에 도달했습니다.")
+                break
+            if f.name not in st.session_state.pdf_accumulated:
+                st.session_state.pdf_accumulated[f.name] = f.getvalue()
+                added += 1
+        if added:
+            st.toast(f"{added}개 추가됨 (누적: {len(st.session_state.pdf_accumulated)}개)")
 
-        if st.button("🚀 변환 시작", type="primary", key="pdf_convert_btn"):
+    pdf_total = len(st.session_state.pdf_accumulated)
+
+    if pdf_total > 0:
+        st.info(f"📂 누적 PDF: **{pdf_total}개** (최대 {PDF_MAX}개)")
+        with st.expander(f"누적 파일 목록 ({pdf_total}개)"):
+            for name in sorted(st.session_state.pdf_accumulated.keys()):
+                st.caption(f"• {name}")
+        col_a, col_b = st.columns([3, 1])
+        with col_a:
+            convert_btn = st.button("🚀 변환 시작", type="primary", key="pdf_convert_btn")
+        with col_b:
+            if st.button("🗑️ 목록 초기화", key="pdf_clear_btn"):
+                st.session_state.pdf_accumulated = {}
+                st.rerun()
+    else:
+        st.info("PDF 파일을 업로드해주세요. 여러 번 나눠서 추가할 수 있습니다.")
+        convert_btn = False
+
+    uploaded_files = list(st.session_state.pdf_accumulated.items())  # [(name, bytes)]
+
+    if convert_btn and pdf_total > 0:
+        if True:
             records = []
             failed = []
             progress = st.progress(0.0)
@@ -282,17 +317,17 @@ def render_pdf_tab():
 
             with tempfile.TemporaryDirectory() as tdir:
                 total = len(uploaded_files)
-                for i, uf in enumerate(sorted(uploaded_files, key=lambda f: f.name), 1):
-                    status.write(f"({i}/{total}) 변환 중: {uf.name}")
-                    tmp_path = Path(tdir) / uf.name
-                    tmp_path.write_bytes(uf.getvalue())
+                for i, (fname, fbytes) in enumerate(sorted(uploaded_files, key=lambda x: x[0]), 1):
+                    status.write(f"({i}/{total}) 변환 중: {fname}")
+                    tmp_path = Path(tdir) / fname
+                    tmp_path.write_bytes(fbytes)
                     try:
                         rec = parse_pdf(str(tmp_path))
                         records.append(rec)
                         log_box.write(f"✅ 완료: {rec.get('REPORT NO.', '')} / {rec.get('공장', '')}")
                     except Exception as e:
-                        failed.append(uf.name)
-                        log_box.write(f"❌ 실패: {uf.name} — {e}")
+                        failed.append(fname)
+                        log_box.write(f"❌ 실패: {fname} — {e}")
                     progress.progress(i / total)
 
                 if not records:
@@ -312,6 +347,7 @@ def render_pdf_tab():
                     }
                     # 새 변환 결과가 생겼으므로 이전 분석 결과는 더 이상 자동으로 보여주지 않음
                     st.session_state.pdf_analysis_done = False
+                    st.session_state.pdf_accumulated = {}
     else:
         st.info("PDF 파일을 업로드해주세요.")
 
