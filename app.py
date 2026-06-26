@@ -266,7 +266,7 @@ def render_pdf_tab():
     PDF_MAX = 1000
 
     if "pdf_accumulated" not in st.session_state:
-        st.session_state.pdf_accumulated = {}  # {filename: bytes}
+        st.session_state.pdf_accumulated = {}
 
     new_pdfs = st.file_uploader(
         "PDF 파일 업로드 (여러 번 나눠서 추가 가능, 최대 1000개)",
@@ -305,51 +305,45 @@ def render_pdf_tab():
         st.info("PDF 파일을 업로드해주세요. 여러 번 나눠서 추가할 수 있습니다.")
         convert_btn = False
 
-    uploaded_files = list(st.session_state.pdf_accumulated.items())  # [(name, bytes)]
-
     if convert_btn and pdf_total > 0:
-        if True:
-            records = []
-            failed = []
-            progress = st.progress(0.0)
-            status = st.empty()
-            log_box = st.container(height=250)
+        records = []
+        failed = []
+        progress = st.progress(0.0)
+        status = st.empty()
+        log_box = st.container(height=250)
+        uploaded_files = list(st.session_state.pdf_accumulated.items())
 
-            with tempfile.TemporaryDirectory() as tdir:
-                total = len(uploaded_files)
-                for i, (fname, fbytes) in enumerate(sorted(uploaded_files, key=lambda x: x[0]), 1):
-                    status.write(f"({i}/{total}) 변환 중: {fname}")
-                    tmp_path = Path(tdir) / fname
-                    tmp_path.write_bytes(fbytes)
-                    try:
-                        rec = parse_pdf(str(tmp_path))
-                        records.append(rec)
-                        log_box.write(f"✅ 완료: {rec.get('REPORT NO.', '')} / {rec.get('공장', '')}")
-                    except Exception as e:
-                        failed.append(fname)
-                        log_box.write(f"❌ 실패: {fname} — {e}")
-                    progress.progress(i / total)
+        with tempfile.TemporaryDirectory() as tdir:
+            total = len(uploaded_files)
+            for i, (fname, fbytes) in enumerate(sorted(uploaded_files, key=lambda x: x[0]), 1):
+                status.write(f"({i}/{total}) 변환 중: {fname}")
+                tmp_path = Path(tdir) / fname
+                tmp_path.write_bytes(fbytes)
+                try:
+                    rec = parse_pdf(str(tmp_path))
+                    records.append(rec)
+                    log_box.write(f"✅ 완료: {rec.get('REPORT NO.', '')} / {rec.get('공장', '')}")
+                except Exception as e:
+                    failed.append(fname)
+                    log_box.write(f"❌ 실패: {fname} — {e}")
+                progress.progress(i / total)
 
-                if not records:
-                    st.error("변환에 성공한 PDF가 없습니다.")
-                    st.session_state.pdf_convert_result = None
-                else:
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    out_name = f"불량율_분석_통합_{ts}.xlsx"
-                    out_path = tmpdir / out_name  # 세션 동안 유지되는 폴더에 저장
-                    make_workbook(records, str(out_path))
-
-                    st.session_state.pdf_convert_result = {
-                        "out_path": str(out_path),
-                        "out_name": out_name,
-                        "success_count": len(records),
-                        "failed": failed,
-                    }
-                    # 새 변환 결과가 생겼으므로 이전 분석 결과는 더 이상 자동으로 보여주지 않음
-                    st.session_state.pdf_analysis_done = False
-                    st.session_state.pdf_accumulated = {}
-    else:
-        st.info("PDF 파일을 업로드해주세요.")
+        if not records:
+            st.error("변환에 성공한 PDF가 없습니다.")
+            st.session_state.pdf_convert_result = None
+        else:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            out_name = f"불량율_분석_통합_{ts}.xlsx"
+            out_path = tmpdir / out_name
+            make_workbook(records, str(out_path))
+            st.session_state.pdf_convert_result = {
+                "out_path": str(out_path),
+                "out_name": out_name,
+                "success_count": len(records),
+                "failed": failed,
+            }
+            st.session_state.pdf_analysis_done = False
+            st.session_state.pdf_accumulated = {}
 
     result = st.session_state.get("pdf_convert_result")
     if result:
@@ -362,27 +356,23 @@ def render_pdf_tab():
         if out_path.exists():
             col1, col2 = st.columns(2)
             with col1:
-                st.download_button(
-                    "⬇️ Excel 다운로드",
-                    data=out_path.read_bytes(),
-                    file_name=result["out_name"],
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary",
-                    key="dl_pdf_result",
-                )
+                with open(result["out_path"], "rb") as fp:
+                    st.download_button(
+                        "⬇️ Excel 다운로드",
+                        data=fp,
+                        file_name=result["out_name"],
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_excel",
+                    )
             with col2:
-                if st.button("→ 이 파일로 바로 분석하기", key="pdf_to_analysis_btn"):
+                if st.button("📊 이 파일로 불량명 분석 시작", key="auto_analyze_btn"):
                     with st.spinner("분석 중..."):
-                        run_mapping_analysis([str(out_path)])
+                        run_mapping_analysis([result["out_path"]])
                     st.session_state.pdf_analysis_done = True
 
-            if st.session_state.get("pdf_analysis_done"):
-                st.success("✅ 분석이 완료되었습니다. 위의 '📊 불량명 표준화' 탭에서 결과를 확인하세요.")
+        if st.session_state.get("pdf_analysis_done"):
+            st.success("✅ 분석이 완료되었습니다. 위의 '📊 불량명 표준화' 탭에서 결과를 확인하세요.")
 
-
-# ──────────────────────────────────────────────────────────────────
-# 탭2: 불량명 표준화 매핑
-# ──────────────────────────────────────────────────────────────────
 def render_defect_tab():
     panel_title("📊 불량명 표준화 매핑")
 
