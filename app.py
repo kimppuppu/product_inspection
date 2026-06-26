@@ -20,6 +20,7 @@ from core.pdf_extractor import parse_pdf, make_workbook
 from core.defect_core import (
     load_standard, load_raw, build_mapping, mapping_to_records,
     calc_stats, build_excel, save_corrections_to_std,
+    load_standard_typed, build_mapping_typed, classify_item_type,
 )
 from core.factory_ranking import (
     calc_factory_ranking, calc_region_heatmap, calc_factory_detail,
@@ -219,6 +220,7 @@ def fmt_pct1(v):
 
 
 DEFAULT_STD_PATH = Path(__file__).resolve().parent / "표준불량명칭.xlsx"
+DATA_DIR = Path(__file__).parent / "data"
 DEFAULT_PLAN_PATH = Path(__file__).resolve().parent / "plan_budget.xlsx"
 
 if "tmpdir" not in st.session_state:
@@ -228,19 +230,26 @@ tmpdir = Path(st.session_state.tmpdir)
 
 def run_mapping_analysis(raw_paths):
     """표준불량명칭/불량상세 데이터를 읽어 매핑을 수행하고 세션에 저장합니다."""
-    if "std_path" not in st.session_state:
-        std_path = tmpdir / "표준불량명칭.xlsx"
-        shutil.copy(DEFAULT_STD_PATH, std_path)
-        st.session_state.std_path = str(std_path)
-
-    std_path = Path(st.session_state.std_path)
-
-    std_names, adict, used_sheet = load_standard(str(std_path))
     raw_rows, skipped = load_raw(raw_paths)
-    cache, catmap = build_mapping(raw_rows, std_names, adict)
 
-    st.session_state.std_names = std_names
-    st.session_state.adict = adict
+    # 의류/잡화/신발 분류별 표준불량명칭 로드
+    std_by_type = load_standard_typed(str(DATA_DIR))
+
+    # 분류별 typed 매핑 (raw_rows에 product_type 필드 추가됨)
+    cache, catmap = build_mapping_typed(raw_rows, std_by_type)
+
+    # 수동수정 UI용: 전체 std_names 합본 (의류 기준, 나머지 추가)
+    all_names, all_adict = [], {}
+    for ptype in ['의류', '잡화', '신발']:
+        if ptype in std_by_type:
+            for item in std_by_type[ptype][0]:
+                if item not in all_names:
+                    all_names.append(item)
+            all_adict.update(std_by_type[ptype][1])
+
+    st.session_state.std_by_type = std_by_type
+    st.session_state.std_names = all_names
+    st.session_state.adict = all_adict
     st.session_state.raw_rows = raw_rows
     st.session_state.cache = cache
     st.session_state.catmap = catmap
@@ -360,22 +369,65 @@ def render_defect_tab():
     st.caption(f"사용 중인 표준불량명칭 파일: {'업로드된 파일' if std_file is not None else '기본 파일'}")
 
     panel_title("2단계: 불량상세 데이터 업로드")
-    raw_files = st.file_uploader(
-        "불량상세 데이터 (Excel, '② 불량상세' 시트 포함, 여러 개 선택 가능)",
+
+    MAX_FILES = 1000
+
+    # 누적 파일 저장소 초기화
+    if "accumulated_files" not in st.session_state:
+        st.session_state.accumulated_files = {}  # {filename: bytes}
+
+    new_files = st.file_uploader(
+        "불량상세 데이터 (Excel, '② 불량상세' 시트 포함, 여러 번 나눠서 추가 가능)",
         type=["xlsx"], accept_multiple_files=True, key="raw_uploader",
     )
 
-    if raw_files and st.button("🔍 매핑 분석 시작", type="primary", key="mapping_btn"):
-        with st.spinner("분석 중..."):
+    # 새로 업로드된 파일을 누적 목록에 추가
+    if new_files:
+        added = 0
+        skipped_dup = []
+        for f in new_files:
+            if len(st.session_state.accumulated_files) >= MAX_FILES:
+                st.warning(f"최대 {MAX_FILES}개 파일 한도에 도달했습니다.")
+                break
+            if f.name not in st.session_state.accumulated_files:
+                st.session_state.accumulated_files[f.name] = f.getvalue()
+                added += 1
+            else:
+                skipped_dup.append(f.name)
+        if added:
+            st.toast(f"{added}개 파일 추가됨 (누적: {len(st.session_state.accumulated_files)}개)")
+        if skipped_dup:
+            st.caption(f"중복 파일 무시: {', '.join(skipped_dup)}")
+
+    total_acc = len(st.session_state.accumulated_files)
+    if total_acc > 0:
+        st.info(f"📂 누적 파일: **{total_acc}개** (최대 {MAX_FILES}개) — 파일을 추가한 후 분석을 실행하세요.")
+        with st.expander(f"누적 파일 목록 ({total_acc}개)"):
+            for name in sorted(st.session_state.accumulated_files.keys()):
+                st.caption(f"• {name}")
+        col_a, col_b = st.columns([3, 1])
+        with col_a:
+            run_btn = st.button("🔍 매핑 분석 시작", type="primary", key="mapping_btn",
+                                disabled=(total_acc == 0))
+        with col_b:
+            if st.button("🗑️ 목록 초기화", key="clear_files_btn"):
+                st.session_state.accumulated_files = {}
+                st.rerun()
+    else:
+        st.info("파일을 업로드해주세요. 여러 번 나눠서 추가할 수 있습니다.")
+        run_btn = False
+
+    if run_btn and total_acc > 0:
+        with st.spinner(f"{total_acc}개 파일 분석 중..."):
             raw_paths = []
-            for f in raw_files:
-                p = tmpdir / f.name
-                p.write_bytes(f.getvalue())
+            for fname, fbytes in st.session_state.accumulated_files.items():
+                p = tmpdir / fname
+                p.write_bytes(fbytes)
                 raw_paths.append(str(p))
 
             run_mapping_analysis(raw_paths)
 
-        st.success("분석 완료!")
+        st.success(f"분석 완료! ({total_acc}개 파일 처리)")
 
     if "raw_rows" in st.session_state:
         raw_rows = st.session_state.raw_rows
@@ -407,7 +459,7 @@ def render_defect_tab():
             view = df
 
         show_cols = ['file', 'report_no', 'date', 'factory', 'defect_raw',
-                      'part', 'std', 'category', 'score', 'method', 'review', 'note']
+                      'part', 'std', 'category', 'score', 'method', 'review', 'note', 'product_type']
         st.dataframe(view[show_cols], use_container_width=True, height=400)
 
         panel_title("수동 수정 — 검토 필요 / 미매핑 항목")
@@ -420,13 +472,29 @@ def render_defect_tab():
             review_df = review_df.rename(columns={
                 'part': '분리불량명', 'std': '추천 표준명', 'method': '매핑방법', 'score': '신뢰도',
             })
-            review_df['확정표준명'] = review_df['추천 표준명']
-            std_options = [s[0] for s in std_names]
+
+            # [구분] 불량명 형식으로 드롭다운 옵션 구성
+            _cat_map = {}  # display → bare name
+            _display_opts = []
+            for sname, scat, _ in std_names:
+                label = f"[{scat}] {sname}" if scat else sname
+                _display_opts.append(label)
+                _cat_map[label] = sname
+            _name_to_display = {v: k for k, v in _cat_map.items()}  # bare name → display
+
+            # 추천 표준명을 display 형식으로 변환
+            review_df['확정표준명'] = review_df['추천 표준명'].apply(
+                lambda n: _name_to_display.get(n, n) if n else ""
+            )
 
             edited = st.data_editor(
                 review_df,
                 column_config={
-                    "확정표준명": st.column_config.SelectboxColumn(options=[""] + std_options),
+                    "확정표준명": st.column_config.SelectboxColumn(
+                        label="확정표준명 (구분 > 불량명 선택)",
+                        options=[""] + _display_opts,
+                        help="구분과 불량명을 함께 표시합니다. 선택하면 표준불량명칭으로 저장됩니다."
+                    ),
                 },
                 disabled=['분리불량명', '추천 표준명', '매핑방법', '신뢰도'],
                 use_container_width=True,
@@ -437,15 +505,29 @@ def render_defect_tab():
             if st.button("✅ 수정사항 적용 및 표준불량명칭에 저장", key="save_correction_btn"):
                 corrections = []
                 for _, row in edited.iterrows():
-                    if row['확정표준명'] and row['확정표준명'] != row['추천 표준명']:
-                        corrections.append({"part": row['분리불량명'], "std": row['확정표준명']})
+                    selected_display = row['확정표준명']
+                    if not selected_display:
+                        continue
+                    # display 형식 → bare name 변환
+                    selected_name = _cat_map.get(selected_display, selected_display)
+                    original_name = row['추천 표준명'] or ""
+                    if selected_name != original_name:
+                        corrections.append({"part": row['분리불량명'], "std": selected_name})
                 if corrections:
                     added = save_corrections_to_std(str(std_path), corrections)
                     st.success(f"{added}개 별칭이 표준불량명칭.xlsx에 저장되었습니다. 재분석합니다...")
-                    std_names, adict, _ = load_standard(str(std_path))
-                    cache, catmap = build_mapping(raw_rows, std_names, adict)
-                    st.session_state.std_names = std_names
-                    st.session_state.adict = adict
+                    std_by_type = load_standard_typed(str(DATA_DIR))
+                    cache, catmap = build_mapping_typed(raw_rows, std_by_type)
+                    all_names, all_adict = [], {}
+                    for ptype in ['의류', '잡화', '신발']:
+                        if ptype in std_by_type:
+                            for item in std_by_type[ptype][0]:
+                                if item not in all_names:
+                                    all_names.append(item)
+                            all_adict.update(std_by_type[ptype][1])
+                    st.session_state.std_by_type = std_by_type
+                    st.session_state.std_names = all_names
+                    st.session_state.adict = all_adict
                     st.session_state.cache = cache
                     st.session_state.catmap = catmap
                     st.rerun()
@@ -914,29 +996,10 @@ with st.expander("ℹ️ 사용 안내", expanded=False):
 - **📄 PDF → Excel 변환**: 불량보고서 PDF를 업로드하면 통합 Excel 파일로 변환합니다.
 - **📊 불량명 표준화**: 불량상세 데이터를 업로드하면 표준 불량명으로 자동 매핑하고, 미매핑/검토 항목을 수동으로 수정할 수 있습니다.
 - **🏭 공장·지역 분석**: (📊 탭에서 분석 완료 후) 공장별·지역별 불량률 랭킹, 추이, PDF 보고서를 확인합니다.
-- **📈 실적 분석**: 실적 rawdata를 업로드하면 KPI, 3개년 추이, 목표대비 실적, 지역×코드 교차분석을 확인합니다.
-
-업로드한 파일은 현재 접속 세션에서만 메모리에 보관되며, 다른 사용자와 공유되지 않습니다.
-브라우저를 새로고침하거나 세션이 종료되면 업로드/분석 내용은 초기화됩니다. 필요한 결과는 각 화면의 다운로드 버튼으로 저장해 두세요.
+- **📈 실적 분석**: 실적 rawdata를 업로드하면 월별·브랜드·바이어별 실적을 분석합니다.
 """)
 
-main_tab1, main_tab2 = st.tabs([
-    "📋 보고서 분석",
-    "📈 실적 분석",
-])
-
-with main_tab1:
-    sub_tab1, sub_tab2, sub_tab3 = st.tabs([
-        "📄 PDF → Excel 변환",
-        "📊 불량명 표준화",
-        "🏭 공장·지역 분석",
-    ])
-    with sub_tab1:
-        render_pdf_tab()
-    with sub_tab2:
-        render_defect_tab()
-    with sub_tab3:
-        render_factory_tab()
-
-with main_tab2:
-    render_performance_tab()
+render_pdf_tab()
+render_defect_tab()
+render_factory_tab()
+render_performance_tab()
