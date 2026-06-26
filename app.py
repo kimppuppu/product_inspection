@@ -16,25 +16,35 @@ import plotly.graph_objects as go
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from core.pdf_extractor import parse_pdf, make_workbook
-from core.defect_core import (
-    load_standard, load_raw, build_mapping, mapping_to_records,
-    calc_stats, build_excel, save_corrections_to_std,
-    load_standard_typed, build_mapping_typed, classify_item_type,
-)
-from core.factory_ranking import (
-    calc_factory_ranking, calc_region_heatmap, calc_factory_detail,
-    build_ai_comment_data, get_filter_options as get_factory_filter_options,
-)
-from core.ai_comment import get_comment
-from core.pdf_report import generate_factory_pdf
-from core.word_report import generate_word_report
-from core.performance_core import (
-    load_performance, filter_rows, get_filter_options as get_perf_filter_options,
-    summary_by_brand, region_code_crosstab, yoy_comparison, monthly_compare,
-    cumulative_by_year, actual_by_month_code, load_plan_budget, CODE_LABELS,
-    summary_by_year, REGION_ORDER,
-)
+try:
+    from core.pdf_extractor import parse_pdf, make_workbook
+    from core.defect_core import (
+        load_standard, load_raw, build_mapping, mapping_to_records,
+        calc_stats, build_excel, save_corrections_to_std,
+        load_standard_typed, build_mapping_typed, classify_item_type,
+    )
+    from core.factory_ranking import (
+        calc_factory_ranking, calc_region_heatmap, calc_factory_detail,
+        build_ai_comment_data, get_filter_options as get_factory_filter_options,
+    )
+    from core.ai_comment import get_comment
+    from core.pdf_report import generate_factory_pdf
+    from core.word_report import generate_word_report
+    from core.performance_core import (
+        load_performance, filter_rows, get_filter_options as get_perf_filter_options,
+        summary_by_brand, region_code_crosstab, yoy_comparison, monthly_compare,
+        cumulative_by_year, actual_by_month_code, load_plan_budget, CODE_LABELS,
+        summary_by_year, REGION_ORDER,
+    )
+    _IMPORT_ERROR = None
+except Exception as _e:
+    import traceback
+    _IMPORT_ERROR = traceback.format_exc()
+
+if _IMPORT_ERROR:
+    st.error("앱 시작 오류 — 아래 내용을 개발자에게 전달해주세요:")
+    st.code(_IMPORT_ERROR)
+    st.stop()
 
 st.set_page_config(
     page_title="제품평가 업무관리",
@@ -1068,12 +1078,12 @@ def render_performance_tab():
 # 상단 탭 구성
 # ──────────────────────────────────────────────────────────────────
 with st.expander("ℹ️ 사용 안내", expanded=False):
-    st.markdown("""
-- **📄 PDF → Excel 변환**: 불량보고서 PDF를 업로드하면 통합 Excel 파일로 변환합니다.
-- **📊 불량명 표준화**: 불량상세 데이터를 업로드하면 표준 불량명으로 자동 매핑하고, 미매핑/검토 항목을 수동으로 수정할 수 있습니다.
-- **🏗️ 공장·지역 분석**: (📊 탭에서 분석 완료 후) 공장별·지역별 불량률 랝킹, 추이, PDF 보고서를 확인합니다.
-- **📈 실적 분석**: 실적 rawdata를 업로드하면 월별·브랜드·바이어별 실적을 분석합니다.
-""")
+    st.markdown(
+        "- **PDF → Excel 변환**: 불량보고서 PDF를 업로드하면 통합 Excel 파일로 변환합니다.\n"
+        "- **불량명 표준화**: 불량상세 데이터를 업로드하면 표준 불량명으로 자동 매핑하고, 미매핑/검토 항목을 수동으로 수정할 수 있습니다.\n"
+        "- **공장·지역 분석**: (불량명 표준화 탭에서 분석 완료 후) 공장별·지역별 불량률 랭킹, 추이, PDF 보고서를 확인합니다.\n"
+        "- **실적 분석**: 실적 rawdata를 업로드하면 월별·브랜드·바이어별 실적을 분석합니다."
+    )
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "📄 PDF → Excel",
