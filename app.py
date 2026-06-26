@@ -16,6 +16,7 @@ import plotly.graph_objects as go
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+_IMPORT_ERROR = None
 try:
     from core.pdf_extractor import parse_pdf, make_workbook
     from core.defect_core import (
