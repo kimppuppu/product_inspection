@@ -473,6 +473,9 @@ def build_mapping_typed(raw_rows: list, std_by_type: dict, log_fn=None) -> tuple
 
     cache = {}
     catmap = {}
+    if not std_by_type:
+        # 파일 없을 경우 기본 build_mapping으로 폴백 (빈 캐시 반환)
+        return cache, catmap
     fallback_type = '의류' if '의류' in std_by_type else next(iter(std_by_type))
 
     total = len(raw_to_type)

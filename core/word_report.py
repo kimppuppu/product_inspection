@@ -219,11 +219,22 @@ def aggregate(raw_rows: list, cache: dict) -> dict:
     }
 
     # ── 8. 품목 유형별 비율 ────────────────────────
-    from core.defect_core import classify_item_type
+    _신발_KW = ['신발', 'SHOE', 'SHOES', 'SNEAKER', 'BOOT', 'BOOTS', 'SANDAL',
+                '부츠', '샌들', '스니커', 'SLIPPER', '슬리퍼']
+    _잡화_KW = ['가방', 'BAG', '지갑', 'WALLET', '파우치', 'POUCH',
+                '모자', 'HAT', 'CAP', '머플러', 'MUFFLER', 'SCARF',
+                '장갑', 'GLOVE', '벨트', 'BELT', '우산', '백팩', 'BACKPACK']
+    def _classify(item_str):
+        s = str(item_str or '').upper()
+        for kw in _신발_KW:
+            if kw in s: return '신발'
+        for kw in _잡화_KW:
+            if kw in s: return '잡화'
+        return '의류'
     type_inspec = defaultdict(int)
     type_defect = defaultdict(int)
     for r in raw_rows:
-        ptype = r.get('product_type') or classify_item_type(r.get('item', ''))
+        ptype = r.get('product_type') or _classify(r.get('item', ''))
         type_inspec[ptype] += _safe_int(r.get('inspec'))
         type_defect[ptype] += _safe_int(r.get('qty_total'))
     by_item_type = [
