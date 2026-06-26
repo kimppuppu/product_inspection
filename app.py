@@ -574,7 +574,7 @@ def render_defect_tab():
             st.error(f"보고서 생성 오류: {e}")
 
         st.info("💡 이 화면에서 분석한 데이터는 '🏭 공장·지역 분석' 탭에서 그대로 사용할 수 있습니다.")
-    elif not raw_files:
+    elif total_acc == 0:
         st.info("불량상세 데이터 파일을 업로드 후 '매핑 분석 시작' 버튼을 눌러주세요.")
 
 
@@ -999,7 +999,18 @@ with st.expander("ℹ️ 사용 안내", expanded=False):
 - **📈 실적 분석**: 실적 rawdata를 업로드하면 월별·브랜드·바이어별 실적을 분석합니다.
 """)
 
-render_pdf_tab()
-render_defect_tab()
-render_factory_tab()
-render_performance_tab()
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📄 PDF → Excel",
+    "📊 불량명 표준화",
+    "🏭 공장·지역 분석",
+    "📈 실적 분석",
+])
+
+with tab1:
+    render_pdf_tab()
+with tab2:
+    render_defect_tab()
+with tab3:
+    render_factory_tab()
+with tab4:
+    render_performance_tab()
