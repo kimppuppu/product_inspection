@@ -340,7 +340,7 @@ def render_pdf_tab():
         next_batch_btn = False
 
     def _run_batch(names_batch):
-        """names_batch 파일들을 변환해 partial_records/failed에 누적"""
+        """names_batch 파일들을 변환해 partial_records/failed에 누적. 처리 후 bytes 해제."""
         progress = st.progress(0.0)
         status = st.empty()
         log_box = st.container(height=200)
@@ -348,13 +348,14 @@ def render_pdf_tab():
         with tempfile.TemporaryDirectory() as tdir:
             for i, fname in enumerate(names_batch, 1):
                 status.write(f"({i}/{total}) 변환 중: {fname}")
-                fbytes = st.session_state.pdf_accumulated.get(fname)
+                fbytes = st.session_state.pdf_accumulated.pop(fname, None)  # 꺼내면서 즉시 해제
                 if fbytes is None:
                     st.session_state.pdf_partial_failed.append(fname)
                     progress.progress(i / total)
                     continue
                 tmp_path = Path(tdir) / fname
                 tmp_path.write_bytes(fbytes)
+                del fbytes  # 명시적 메모리 해제
                 try:
                     rec = parse_pdf(str(tmp_path))
                     st.session_state.pdf_partial_records.append(rec)
