@@ -234,7 +234,7 @@ DEFAULT_STD_PATH = Path(__file__).resolve().parent / "표준불량명칭.xlsx"
 DATA_DIR = Path(__file__).parent / "data"
 DEFAULT_PLAN_PATH = Path(__file__).resolve().parent / "plan_budget.xlsx"
 
-if "tmpdir" not in st.session_state:
+if "tmpdir" not in st.session_state or not Path(st.session_state.tmpdir).exists():
     st.session_state.tmpdir = tempfile.mkdtemp(prefix="defect_")
 tmpdir = Path(st.session_state.tmpdir)
 
@@ -1039,10 +1039,26 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 with tab1:
-    render_pdf_tab()
+    try:
+        render_pdf_tab()
+    except Exception as _tab_e:
+        st.error(f"PDF 탭 오류: {_tab_e}")
+        st.exception(_tab_e)
 with tab2:
-    render_defect_tab()
+    try:
+        render_defect_tab()
+    except Exception as _tab_e:
+        st.error(f"불량명 탭 오류: {_tab_e}")
+        st.exception(_tab_e)
 with tab3:
-    render_factory_tab()
+    try:
+        render_factory_tab()
+    except Exception as _tab_e:
+        st.error(f"공장 탭 오류: {_tab_e}")
+        st.exception(_tab_e)
 with tab4:
-    render_performance_tab()
+    try:
+        render_performance_tab()
+    except Exception as _tab_e:
+        st.error(f"실적 탭 오류: {_tab_e}")
+        st.exception(_tab_e)
