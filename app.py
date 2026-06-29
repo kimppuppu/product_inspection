@@ -323,10 +323,9 @@ def render_pdf_tab():
             status.empty()
             prog.empty()
             added = len(new_files)
-            # 업로더 key 변경 → 다음 rerun 시 빈 업로더로 리셋 (메모리 해제)
+            # 업로더 key 변경 → 다음 렌더링 시 빈 업로더로 리셋 (메모리 해제)
             st.session_state.pdf_upload_key += 1
             st.toast(f"{added}개 변환 완료 (누적: {len(st.session_state.pdf_records)}개 성공)")
-            st.rerun()
 
     total_rec = len(st.session_state.pdf_records)
     total_fail = len(st.session_state.pdf_failed)
@@ -1051,27 +1050,23 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "📈 실적 분석",
 ])
 
+def _safe_render(fn, label):
+    """Streamlit 내부 예외(RerunException 등)는 재발생, 나머지만 화면에 표시"""
+    try:
+        fn()
+    except Exception as _e:
+        # Streamlit 내부 제어 예외는 그대로 올려보냄
+        _mod = type(_e).__module__ or ""
+        if "streamlit" in _mod:
+            raise
+        st.error(f"{label} 오류: {_e}")
+        st.exception(_e)
+
 with tab1:
-    try:
-        render_pdf_tab()
-    except Exception as _tab_e:
-        st.error(f"PDF 탭 오류: {_tab_e}")
-        st.exception(_tab_e)
+    _safe_render(render_pdf_tab, "PDF 탭")
 with tab2:
-    try:
-        render_defect_tab()
-    except Exception as _tab_e:
-        st.error(f"불량명 탭 오류: {_tab_e}")
-        st.exception(_tab_e)
+    _safe_render(render_defect_tab, "불량명 탭")
 with tab3:
-    try:
-        render_factory_tab()
-    except Exception as _tab_e:
-        st.error(f"공장 탭 오류: {_tab_e}")
-        st.exception(_tab_e)
+    _safe_render(render_factory_tab, "공장 탭")
 with tab4:
-    try:
-        render_performance_tab()
-    except Exception as _tab_e:
-        st.error(f"실적 탭 오류: {_tab_e}")
-        st.exception(_tab_e)
+    _safe_render(render_performance_tab, "실적 탭")
