@@ -1053,11 +1053,27 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "📈 실적 분석",
 ])
 
+# Streamlit 내부 제어 예외 — 반드시 re-raise 해야 함
+try:
+    from streamlit.runtime.scriptrunner import RerunException, StopException
+    _ST_EXC = (RerunException, StopException)
+except Exception:
+    _ST_EXC = ()
+
+def _tab(fn, label):
+    try:
+        fn()
+    except Exception as _e:
+        if _ST_EXC and isinstance(_e, _ST_EXC):
+            raise
+        st.error(f"**{label} 오류** — 아래 내용을 개발자에게 전달해주세요:")
+        st.exception(_e)
+
 with tab1:
-    render_pdf_tab()
+    _tab(render_pdf_tab, "PDF 탭")
 with tab2:
-    render_defect_tab()
+    _tab(render_defect_tab, "불량명 탭")
 with tab3:
-    render_factory_tab()
+    _tab(render_factory_tab, "공장 탭")
 with tab4:
-    render_performance_tab()
+    _tab(render_performance_tab, "실적 탭")
