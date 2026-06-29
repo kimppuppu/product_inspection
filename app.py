@@ -291,7 +291,12 @@ def render_pdf_tab():
 
     # 새로 업로드된 파일 → 즉시 파싱 → 바이트 버림
     if new_pdfs:
+        import gc
+        PARSE_LIMIT = 50  # 한 번에 파싱할 최대 개수
         new_files = [f for f in new_pdfs if f.name not in st.session_state.pdf_seen]
+        if len(new_files) > PARSE_LIMIT:
+            st.warning(f"한 번에 최대 {PARSE_LIMIT}개까지 처리됩니다. {len(new_files)}개 중 앞 {PARSE_LIMIT}개만 처리 후 나머지를 다시 올려주세요.")
+            new_files = new_files[:PARSE_LIMIT]
         if new_files:
             prog = st.progress(0.0)
             status = st.empty()
@@ -302,13 +307,15 @@ def render_pdf_tab():
                         break
                     status.write(f"({i}/{len(new_files)}) 변환 중: {f.name}")
                     tmp_path = Path(tdir) / f.name
-                    tmp_path.write_bytes(f.getvalue())  # 임시 파일로만 씀
+                    tmp_path.write_bytes(f.getvalue())
                     try:
                         rec = parse_pdf(str(tmp_path))
                         st.session_state.pdf_records.append(rec)
                     except Exception as e:
                         st.session_state.pdf_failed.append(f.name)
                     st.session_state.pdf_seen.add(f.name)
+                    tmp_path.unlink(missing_ok=True)  # 임시파일 즉시 삭제
+                    gc.collect()  # 강제 메모리 해제
                     prog.progress(i / len(new_files))
             status.empty()
             prog.empty()
