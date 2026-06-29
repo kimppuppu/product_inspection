@@ -271,12 +271,12 @@ def run_mapping_analysis(raw_paths):
 # 탭1: PDF → Excel 변환
 # ──────────────────────────────────────────────────────────────────
 def render_pdf_tab():
-    panel_title("📄 불량보고서 PDF → Excel 변환")
-    st.markdown("불량보고서 PDF 파일들을 업로드하면 통합 Excel 파일로 변환합니다.")
-
     import gc
 
-    # 결과만 저장 (바이트는 업로드 즉시 처리 후 버림)
+    panel_title("📄 불량보고서 PDF → Excel 변환")
+
+    BATCH = 50  # 한 번에 올릴 최대 개수
+
     if "pdf_records" not in st.session_state:
         st.session_state.pdf_records = []
     if "pdf_failed" not in st.session_state:
@@ -284,54 +284,57 @@ def render_pdf_tab():
     if "pdf_seen" not in st.session_state:
         st.session_state.pdf_seen = set()
     if "pdf_upload_key" not in st.session_state:
-        st.session_state.pdf_upload_key = 0  # 업로드 후 리셋용 key
+        st.session_state.pdf_upload_key = 0
+
+    total_rec = len(st.session_state.pdf_records)
+    total_fail = len(st.session_state.pdf_failed)
+
+    # 누적 현황 항상 상단 표시
+    if total_rec + total_fail > 0:
+        st.success(f"✅ 누적 {total_rec}개 변환 완료" + (f"  |  ❌ 실패 {total_fail}개" if total_fail else ""))
+
+    st.info(f"📌 **{BATCH}개씩** 나눠서 올려주세요. 올릴 때마다 자동으로 처리 후 업로더가 초기화됩니다.")
 
     new_pdfs = st.file_uploader(
-        "PDF 파일 업로드 (50개씩 나눠서 올려주세요, 최대 1000개)",
+        f"PDF 파일 선택 (최대 {BATCH}개)",
         type=["pdf"],
         accept_multiple_files=True,
         key=f"pdf_uploader_{st.session_state.pdf_upload_key}",
     )
 
-    # 새로 업로드된 파일 → 즉시 파싱 → 업로더 리셋으로 bytes 해제
     if new_pdfs:
-        PARSE_LIMIT = 50
         new_files = [f for f in new_pdfs if f.name not in st.session_state.pdf_seen]
-        if len(new_files) > PARSE_LIMIT:
-            st.warning(f"한 번에 최대 {PARSE_LIMIT}개까지 처리됩니다. 앞 {PARSE_LIMIT}개만 처리합니다.")
-            new_files = new_files[:PARSE_LIMIT]
+        if len(new_files) > BATCH:
+            st.warning(f"⚠️ {len(new_files)}개 선택됐는데 앞 {BATCH}개만 처리합니다. 나머지는 다음 배치에 올려주세요.")
+            new_files = new_files[:BATCH]
+
         if new_files:
             prog = st.progress(0.0)
             status = st.empty()
             with tempfile.TemporaryDirectory() as tdir:
                 for i, f in enumerate(new_files, 1):
-                    if len(st.session_state.pdf_records) + len(st.session_state.pdf_failed) >= 1000:
+                    if total_rec + total_fail >= 1000:
                         st.warning("최대 1000개 한도에 도달했습니다.")
                         break
-                    status.write(f"({i}/{len(new_files)}) 변환 중: {f.name}")
+                    status.write(f"({i}/{len(new_files)}) 처리 중: {f.name}")
                     tmp_path = Path(tdir) / f.name
                     tmp_path.write_bytes(f.getvalue())
                     try:
                         rec = parse_pdf(str(tmp_path))
                         st.session_state.pdf_records.append(rec)
-                    except Exception as e:
+                    except Exception:
                         st.session_state.pdf_failed.append(f.name)
                     st.session_state.pdf_seen.add(f.name)
                     tmp_path.unlink(missing_ok=True)
                     gc.collect()
                     prog.progress(i / len(new_files))
-            status.empty()
-            prog.empty()
-            added = len(new_files)
-            # 업로더 key 변경 → 다음 렌더링 시 빈 업로더로 리셋 (메모리 해제)
+
+            # 업로더 리셋 → 이전 배치 bytes 메모리 해제
             st.session_state.pdf_upload_key += 1
-            st.toast(f"{added}개 변환 완료 (누적: {len(st.session_state.pdf_records)}개 성공)")
+            st.rerun()
 
-    total_rec = len(st.session_state.pdf_records)
-    total_fail = len(st.session_state.pdf_failed)
-
+    # 하단 버튼 영역
     if total_rec + total_fail > 0:
-        st.info(f"📂 누적: **{total_rec}개 성공** / {total_fail}개 실패 (최대 1000개)")
         col_a, col_b = st.columns([3, 1])
         with col_a:
             make_btn = st.button("📥 Excel 파일 생성", type="primary", key="pdf_make_btn",
@@ -342,13 +345,13 @@ def render_pdf_tab():
                 st.session_state.pdf_failed = []
                 st.session_state.pdf_seen = set()
                 st.session_state.pdf_convert_result = None
+                st.session_state.pdf_upload_key += 1
                 st.rerun()
         if total_fail > 0:
             with st.expander(f"실패 목록 ({total_fail}개)"):
                 for name in st.session_state.pdf_failed:
                     st.caption(f"❌ {name}")
     else:
-        st.info("PDF 파일을 업로드해주세요. 여러 번 나눠서 추가할 수 있습니다.")
         make_btn = False
 
     if make_btn and total_rec > 0:
@@ -1050,23 +1053,11 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "📈 실적 분석",
 ])
 
-def _safe_render(fn, label):
-    """Streamlit 내부 예외(RerunException 등)는 재발생, 나머지만 화면에 표시"""
-    try:
-        fn()
-    except Exception as _e:
-        # Streamlit 내부 제어 예외는 그대로 올려보냄
-        _mod = type(_e).__module__ or ""
-        if "streamlit" in _mod:
-            raise
-        st.error(f"{label} 오류: {_e}")
-        st.exception(_e)
-
 with tab1:
-    _safe_render(render_pdf_tab, "PDF 탭")
+    render_pdf_tab()
 with tab2:
-    _safe_render(render_defect_tab, "불량명 탭")
+    render_defect_tab()
 with tab3:
-    _safe_render(render_factory_tab, "공장 탭")
+    render_factory_tab()
 with tab4:
-    _safe_render(render_performance_tab, "실적 탭")
+    render_performance_tab()
