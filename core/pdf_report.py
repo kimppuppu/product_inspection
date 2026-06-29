@@ -199,7 +199,7 @@ def generate_factory_pdf(detail: dict) -> bytes:
     story.append(HRFlowable(width="100%", thickness=4, color=PRIMARY, spaceAfter=12))
     story.append(Paragraph("공장 불량률 분석 보고서", s_title))
     story.append(Paragraph(factory, S('FN', fontSize=18, alignment=TA_CENTER,
-                                      spaceAfter=4, fontName=font_name, fontSize=18,
+                                      spaceAfter=4, fontName=font_name,
                                       leading=24)))
     story.append(Paragraph(f"보고일: {today}", s_sub))
     story.append(HRFlowable(width="100%", thickness=1, color=colors.lightgrey, spaceAfter=16))
