@@ -274,28 +274,31 @@ def render_pdf_tab():
     panel_title("📄 불량보고서 PDF → Excel 변환")
     st.markdown("불량보고서 PDF 파일들을 업로드하면 통합 Excel 파일로 변환합니다.")
 
+    import gc
+
     # 결과만 저장 (바이트는 업로드 즉시 처리 후 버림)
     if "pdf_records" not in st.session_state:
-        st.session_state.pdf_records = []   # 파싱된 레코드 목록
+        st.session_state.pdf_records = []
     if "pdf_failed" not in st.session_state:
-        st.session_state.pdf_failed = []    # 실패 파일명
+        st.session_state.pdf_failed = []
     if "pdf_seen" not in st.session_state:
-        st.session_state.pdf_seen = set()   # 중복 방지용 파일명 집합
+        st.session_state.pdf_seen = set()
+    if "pdf_upload_key" not in st.session_state:
+        st.session_state.pdf_upload_key = 0  # 업로드 후 리셋용 key
 
     new_pdfs = st.file_uploader(
-        "PDF 파일 업로드 (여러 번 나눠서 추가 가능, 최대 1000개)",
+        "PDF 파일 업로드 (50개씩 나눠서 올려주세요, 최대 1000개)",
         type=["pdf"],
         accept_multiple_files=True,
-        key="pdf_uploader",
+        key=f"pdf_uploader_{st.session_state.pdf_upload_key}",
     )
 
-    # 새로 업로드된 파일 → 즉시 파싱 → 바이트 버림
+    # 새로 업로드된 파일 → 즉시 파싱 → 업로더 리셋으로 bytes 해제
     if new_pdfs:
-        import gc
-        PARSE_LIMIT = 50  # 한 번에 파싱할 최대 개수
+        PARSE_LIMIT = 50
         new_files = [f for f in new_pdfs if f.name not in st.session_state.pdf_seen]
         if len(new_files) > PARSE_LIMIT:
-            st.warning(f"한 번에 최대 {PARSE_LIMIT}개까지 처리됩니다. {len(new_files)}개 중 앞 {PARSE_LIMIT}개만 처리 후 나머지를 다시 올려주세요.")
+            st.warning(f"한 번에 최대 {PARSE_LIMIT}개까지 처리됩니다. 앞 {PARSE_LIMIT}개만 처리합니다.")
             new_files = new_files[:PARSE_LIMIT]
         if new_files:
             prog = st.progress(0.0)
@@ -314,13 +317,16 @@ def render_pdf_tab():
                     except Exception as e:
                         st.session_state.pdf_failed.append(f.name)
                     st.session_state.pdf_seen.add(f.name)
-                    tmp_path.unlink(missing_ok=True)  # 임시파일 즉시 삭제
-                    gc.collect()  # 강제 메모리 해제
+                    tmp_path.unlink(missing_ok=True)
+                    gc.collect()
                     prog.progress(i / len(new_files))
             status.empty()
             prog.empty()
             added = len(new_files)
+            # 업로더 key 변경 → 다음 rerun 시 빈 업로더로 리셋 (메모리 해제)
+            st.session_state.pdf_upload_key += 1
             st.toast(f"{added}개 변환 완료 (누적: {len(st.session_state.pdf_records)}개 성공)")
+            st.rerun()
 
     total_rec = len(st.session_state.pdf_records)
     total_fail = len(st.session_state.pdf_failed)
