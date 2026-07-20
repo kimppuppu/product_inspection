@@ -507,81 +507,69 @@ def render_defect_tab():
 
         show_cols = ['file', 'report_no', 'date', 'factory', 'defect_raw',
                       'part', 'std', 'category', 'score', 'method', 'review', 'note', 'product_type']
-        st.dataframe(view[show_cols], use_container_width=True, height=400)
 
-        panel_title("수동 수정 — 검토 필요 / 미매핑 항목")
-        review_df = (
-            df[df['review'] == True][['part', 'std', 'method', 'score']]
-            .drop_duplicates(subset=['part'])
-            .reset_index(drop=True)
+        # [구분] 불량명 형식으로 드롭다운 옵션 구성
+        _cat_map = {}   # display → bare name
+        _display_opts = []
+        for sname, scat, _ in std_names:
+            label = f"[{scat}] {sname}" if scat else sname
+            _display_opts.append(label)
+            _cat_map[label] = sname
+        _name_to_display = {v: k for k, v in _cat_map.items()}  # bare name → display
+
+        # std 컬럼을 display 형식("[구분] 불량명")으로 변환해서 표시
+        view_edit = view[show_cols].reset_index(drop=True).copy()
+        _orig_std  = view_edit['std'].copy()   # 원본 bare name (변경 감지용)
+        _orig_part = view_edit['part'].copy()
+        view_edit['std'] = _orig_std.apply(
+            lambda n: _name_to_display.get(n, n) if n else ""
         )
-        if not review_df.empty:
-            review_df = review_df.rename(columns={
-                'part': '분리불량명', 'std': '추천 표준명', 'method': '매핑방법', 'score': '신뢰도',
-            })
 
-            # [구분] 불량명 형식으로 드롭다운 옵션 구성
-            _cat_map = {}  # display → bare name
-            _display_opts = []
-            for sname, scat, _ in std_names:
-                label = f"[{scat}] {sname}" if scat else sname
-                _display_opts.append(label)
-                _cat_map[label] = sname
-            _name_to_display = {v: k for k, v in _cat_map.items()}  # bare name → display
+        st.caption("💡 std 열에서 드롭다운으로 표준불량명을 직접 선택할 수 있습니다.")
+        edited = st.data_editor(
+            view_edit,
+            column_config={
+                "std": st.column_config.SelectboxColumn(
+                    label="표준불량명",
+                    options=[""] + _display_opts,
+                    help="[구분] 불량명 형식으로 선택하세요",
+                ),
+            },
+            disabled=[c for c in show_cols if c != 'std'],
+            use_container_width=True,
+            height=420,
+            key="main_defect_editor",
+        )
 
-            # 추천 표준명을 display 형식으로 변환
-            review_df['확정표준명'] = review_df['추천 표준명'].apply(
-                lambda n: _name_to_display.get(n, n) if n else ""
-            )
-
-            edited = st.data_editor(
-                review_df,
-                column_config={
-                    "확정표준명": st.column_config.SelectboxColumn(
-                        label="확정표준명 (구분 > 불량명 선택)",
-                        options=[""] + _display_opts,
-                        help="구분과 불량명을 함께 표시합니다. 선택하면 표준불량명칭으로 저장됩니다."
-                    ),
-                },
-                disabled=['분리불량명', '추천 표준명', '매핑방법', '신뢰도'],
-                use_container_width=True,
-                height=300,
-                key="correction_editor",
-            )
-
-            if st.button("✅ 수정사항 적용 및 표준불량명칭에 저장", key="save_correction_btn"):
-                corrections = []
-                for _, row in edited.iterrows():
-                    selected_display = row['확정표준명']
-                    if not selected_display:
-                        continue
-                    # display 형식 → bare name 변환
-                    selected_name = _cat_map.get(selected_display, selected_display)
-                    original_name = row['추천 표준명'] or ""
-                    if selected_name != original_name:
-                        corrections.append({"part": row['분리불량명'], "std": selected_name})
-                if corrections:
-                    added = save_corrections_to_std(str(std_path), corrections)
-                    st.success(f"{added}개 별칭이 표준불량명칭.xlsx에 저장되었습니다. 재분석합니다...")
-                    std_by_type = load_standard_typed(str(DATA_DIR))
-                    cache, catmap = build_mapping_typed(raw_rows, std_by_type)
-                    all_names, all_adict = [], {}
-                    for ptype in ['의류', '잡화', '신발']:
-                        if ptype in std_by_type:
-                            for item in std_by_type[ptype][0]:
-                                if item not in all_names:
-                                    all_names.append(item)
-                            all_adict.update(std_by_type[ptype][1])
-                    st.session_state.std_by_type = std_by_type
-                    st.session_state.std_names = all_names
-                    st.session_state.adict = all_adict
-                    st.session_state.cache = cache
-                    st.session_state.catmap = catmap
-                    st.rerun()
-                else:
-                    st.info("변경된 항목이 없습니다.")
-        else:
-            st.info("검토가 필요한 항목이 없습니다.")
+        if st.button("✅ 표준불량명 저장 및 재분석", key="save_correction_btn"):
+            corrections = []
+            for i, row in edited.iterrows():
+                selected_display = row['std']
+                selected_name = _cat_map.get(selected_display, selected_display) if selected_display else ""
+                original_name = _orig_std.iloc[i] if i < len(_orig_std) else ""
+                part_name     = _orig_part.iloc[i] if i < len(_orig_part) else ""
+                if selected_name and selected_name != original_name:
+                    corrections.append({"part": part_name, "std": selected_name})
+            if corrections:
+                added = save_corrections_to_std(str(std_path), corrections)
+                st.success(f"{added}개 별칭이 표준불량명칭.xlsx에 저장되었습니다. 재분석합니다...")
+                std_by_type = load_standard_typed(str(DATA_DIR))
+                cache, catmap = build_mapping_typed(raw_rows, std_by_type)
+                all_names, all_adict = [], {}
+                for ptype in ['의류', '잡화', '신발']:
+                    if ptype in std_by_type:
+                        for item in std_by_type[ptype][0]:
+                            if item not in all_names:
+                                all_names.append(item)
+                        all_adict.update(std_by_type[ptype][1])
+                st.session_state.std_by_type = std_by_type
+                st.session_state.std_names = all_names
+                st.session_state.adict = all_adict
+                st.session_state.cache = cache
+                st.session_state.catmap = catmap
+                st.rerun()
+            else:
+                st.info("변경된 항목이 없습니다.")
 
         panel_title("다운로드")
         col1, col2 = st.columns(2)
