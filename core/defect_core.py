@@ -311,8 +311,10 @@ def norm(s):
 
 
 def split_defect(raw):
+    # 슬래시/콤마 등으로 구분된 복합 불량명은 맨 앞 항목만 사용
     parts = re.split(r'\s*[/,+&]\s*', raw)
-    return [p.strip() for p in parts if p.strip() and re.search(r'[가-힣a-zA-Z]', p)]
+    valid = [p.strip() for p in parts if p.strip() and re.search(r'[가-힣a-zA-Z]', p)]
+    return valid[:1] if valid else []
 
 
 # ── 매핑 실행 ────────────────────────────────────────────────────
