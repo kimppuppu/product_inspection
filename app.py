@@ -517,10 +517,15 @@ def render_defect_tab():
                         'score', 'method']
 
         # 구분(의류/잡화/신발)별 카테고리·표준불량명 옵션 분리 구성
+        # 각 구분의 전용 파일이 있을 때만 사용, 없으면 해당 탭에서 경고 표시
         std_by_type_sess = st.session_state.get('std_by_type', {})
-        _type_opts = {}  # ptype → (categories, cat_map, display_opts, name_to_display)
+        _type_opts = {}  # ptype → (categories, cat_map, display_opts, name_to_display, has_own_file)
         for _pt in ['의류', '잡화', '신발']:
-            _src = std_by_type_sess.get(_pt) or std_by_type_sess.get('의류')
+            _has_own = _pt in std_by_type_sess
+            _src = std_by_type_sess.get(_pt)
+            if not _src:
+                # 전용 파일 없으면 의류로 폴백
+                _src = std_by_type_sess.get('의류')
             if not _src:
                 continue
             _pnames, _ = _src
@@ -533,7 +538,7 @@ def render_defect_tab():
             _dopts = []
             for cat in _cats:
                 _dopts.extend(_sbycat.get(cat, []))
-            _type_opts[_pt] = (_cats, _cmap, _dopts, {v: k for k, v in _cmap.items()})
+            _type_opts[_pt] = (_cats, _cmap, _dopts, {v: k for k, v in _cmap.items()}, _has_own)
 
         # view에 원본값 추적 컬럼 추가 (editor에서는 column_order로 숨김)
         show_cols_all = ['file', 'report_no', 'date', 'factory',
@@ -559,9 +564,11 @@ def render_defect_tab():
         for _tc, _pt in zip(_containers, ptypes_in_view):
             with _tc:
                 if _pt not in _type_opts:
-                    st.warning(f"{_pt} 표준불량명칭 파일이 없습니다.")
+                    st.warning(f"{_pt} 표준불량명칭 파일이 없습니다. data/ 폴더에 [{_pt}]표준불량명칭.xlsx를 추가하세요.")
                     continue
-                _cats, _cmap, _dopts, _n2d = _type_opts[_pt]
+                _cats, _cmap, _dopts, _n2d, _has_own = _type_opts[_pt]
+                if not _has_own:
+                    st.warning(f"⚠️ [{_pt}]표준불량명칭.xlsx 파일이 없어 의류 표준불량명칭을 사용 중입니다. data/ 폴더에 파일을 추가하면 전용 표준명을 사용합니다.")
                 _pdf = view_edit[view_edit['product_type'] == _pt].reset_index(drop=True).copy()
                 _pdf.index = _pdf.index + 1  # 순번 1부터 시작
                 _pdf['std'] = _pdf['_orig_std'].apply(lambda n: _n2d.get(n, n) if n else "")
@@ -591,36 +598,38 @@ def render_defect_tab():
                 )
                 all_edited[_pt] = (_edited, _cmap)
 
-        if st.button("✅ 표준불량명 저장 및 재분석", key="save_correction_btn"):
+        if st.button("✅ 표준불량명 적용 및 재분석", key="save_correction_btn"):
             corrections = []
             for _pt, (_edited, _cmap) in all_edited.items():
                 for _, row in _edited.iterrows():
-                    sel_disp = row['std']
-                    sel_name = _cmap.get(sel_disp, sel_disp) if sel_disp else ""
-                    orig_name = row.get('_orig_std', "")
-                    part_name = row.get('_orig_part', "")
-                    if sel_name and sel_name != orig_name:
+                    sel_disp = str(row.get('std', "") or "").strip()
+                    sel_name = _cmap.get(sel_disp, "") if sel_disp else ""
+                    orig_name = str(row.get('_orig_std', "") or "").strip()
+                    part_name = str(row.get('_orig_part', "") or "").strip()
+                    if sel_name and sel_name != orig_name and part_name:
                         corrections.append({"part": part_name, "std": sel_name})
+
             if corrections:
-                added = save_corrections_to_std(str(std_path), corrections)
-                st.success(f"{added}개 별칭이 표준불량명칭.xlsx에 저장되었습니다. 재분석합니다...")
-                std_by_type = load_standard_typed(str(DATA_DIR))
-                cache, catmap = build_mapping_typed(raw_rows, std_by_type)
-                all_names, all_adict = [], {}
-                for ptype in ['의류', '잡화', '신발']:
-                    if ptype in std_by_type:
-                        for item in std_by_type[ptype][0]:
-                            if item not in all_names:
-                                all_names.append(item)
-                        all_adict.update(std_by_type[ptype][1])
-                st.session_state.std_by_type = std_by_type
-                st.session_state.std_names = all_names
-                st.session_state.adict = all_adict
-                st.session_state.cache = cache
-                st.session_state.catmap = catmap
+                # ── 파일 저장 없이 세션 캐시 직접 업데이트 ──────────────
+                _cache = st.session_state.cache
+                _catmap = st.session_state.catmap
+                _corr_map = {c['part']: c['std'] for c in corrections}
+
+                for raw, results in _cache.items():
+                    new_res = []
+                    for (p, s, sc, m, rv, n) in results:
+                        if p in _corr_map:
+                            new_std = _corr_map[p]
+                            new_res.append((p, new_std, 100, '수동수정', False, '수동선택'))
+                        else:
+                            new_res.append((p, s, sc, m, rv, n))
+                    _cache[raw] = new_res
+
+                st.session_state.cache = _cache
+                st.success(f"✅ {len(corrections)}개 항목 수정 완료. 결과가 즉시 반영됩니다.")
                 st.rerun()
             else:
-                st.info("변경된 항목이 없습니다.")
+                st.info("변경된 항목이 없습니다. 셀을 클릭해 표준불량명을 선택한 뒤 저장하세요.")
 
         panel_title("다운로드")
         col1, col2 = st.columns(2)
