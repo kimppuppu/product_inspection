@@ -485,16 +485,21 @@ def render_defect_tab():
         if st.session_state.get("skipped"):
             st.warning("건너뛴 파일: " + ", ".join(st.session_state.skipped))
 
-        stats = calc_stats(cache)
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("전체 항목", stats['total'])
-        c2.metric("자동매핑", stats['auto'])
-        c3.metric("검토필요", stats['review'])
-        c4.metric("미매핑", stats['unmapped'])
-        c5.metric("자동매핑률", f"{stats['auto_pct']}%")
-
         records = mapping_to_records(raw_rows, cache, catmap)
         df = pd.DataFrame(records)
+
+        # 통계: 고유 불량명 기준이 아닌 실제 행(보고서 건수) 기준
+        _total = len(df)
+        _unmap = int((df['method'] == '미매핑').sum())
+        _auto  = int((~df['review'] & (df['score'] >= 85)).sum())
+        _review = _total - _auto - _unmap
+        _pct   = round(_auto / _total * 100, 1) if _total else 0
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("전체 항목", _total)
+        c2.metric("자동매핑", _auto)
+        c3.metric("검토필요", _review)
+        c4.metric("미매핑", _unmap)
+        c5.metric("자동매핑률", f"{_pct}%")
 
         panel_title("매핑 결과")
         filter_opt = st.radio("필터", ["전체", "검토 필요", "미매핑"], horizontal=True, key="mapping_filter")
