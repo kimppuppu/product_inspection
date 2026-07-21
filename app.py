@@ -563,6 +563,7 @@ def render_defect_tab():
                     continue
                 _cats, _cmap, _dopts, _n2d = _type_opts[_pt]
                 _pdf = view_edit[view_edit['product_type'] == _pt].reset_index(drop=True).copy()
+                _pdf.index = _pdf.index + 1  # 순번 1부터 시작
                 _pdf['std'] = _pdf['_orig_std'].apply(lambda n: _n2d.get(n, n) if n else "")
                 if _pdf.empty:
                     st.info(f"{_pt} 항목 없음")
