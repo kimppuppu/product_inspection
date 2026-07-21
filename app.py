@@ -488,12 +488,12 @@ def render_defect_tab():
         records = mapping_to_records(raw_rows, cache, catmap)
         df = pd.DataFrame(records)
 
-        # 통계: 고유 불량명 기준이 아닌 실제 행(보고서 건수) 기준
-        _total = len(df)
-        _unmap = int((df['method'] == '미매핑').sum())
-        _auto  = int((~df['review'] & (df['score'] >= 85)).sum())
-        _review = _total - _auto - _unmap
-        _pct   = round(_auto / _total * 100, 1) if _total else 0
+        # 통계: 실제 행 기준, 미매핑 / 검토필요 / 자동매핑 명확히 분리
+        _total  = len(df)
+        _unmap  = int((df['method'] == '미매핑').sum())
+        _review = int(((df['review'] == True) & (df['method'] != '미매핑')).sum())
+        _auto   = _total - _unmap - _review
+        _pct    = round(_auto / _total * 100, 1) if _total else 0
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("전체 항목", _total)
         c2.metric("자동매핑", _auto)
@@ -504,7 +504,8 @@ def render_defect_tab():
         panel_title("매핑 결과")
         filter_opt = st.radio("필터", ["전체", "검토 필요", "미매핑"], horizontal=True, key="mapping_filter")
         if filter_opt == "검토 필요":
-            view = df[df['review'] == True]
+            # 미매핑 제외, 퍼지매핑 저신뢰도만
+            view = df[(df['review'] == True) & (df['method'] != '미매핑')]
         elif filter_opt == "미매핑":
             view = df[df['method'] == '미매핑']
         else:
@@ -513,7 +514,7 @@ def render_defect_tab():
         # 컬럼 순서: defect_raw >> part >> 구분 >> 카테고리 >> 표준불량명
         display_cols = ['file', 'report_no', 'date', 'factory',
                         'defect_raw', 'part', 'product_type', 'category', 'std',
-                        'score', 'method', 'review', 'note']
+                        'score', 'method']
 
         # 구분(의류/잡화/신발)별 카테고리·표준불량명 옵션 분리 구성
         std_by_type_sess = st.session_state.get('std_by_type', {})
