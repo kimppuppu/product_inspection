@@ -398,22 +398,7 @@ def render_defect_tab():
     panel_title("📊 불량명 표준화 매핑")
 
     panel_title("1단계: 표준불량명칭 파일")
-    std_file = st.file_uploader(
-        "표준불량명칭.xlsx 업로드 (선택, 업로드하지 않으면 기본 파일 사용)",
-        type=["xlsx"], key="std_uploader",
-    )
-
-    if std_file is not None:
-        std_path = tmpdir / "표준불량명칭.xlsx"
-        std_path.write_bytes(std_file.getvalue())
-        st.session_state.std_path = str(std_path)
-    elif "std_path" not in st.session_state:
-        std_path = tmpdir / "표준불량명칭.xlsx"
-        shutil.copy(DEFAULT_STD_PATH, std_path)
-        st.session_state.std_path = str(std_path)
-
-    std_path = Path(st.session_state.std_path)
-    st.caption(f"사용 중인 표준불량명칭 파일: {'업로드된 파일' if std_file is not None else '기본 파일'}")
+    st.caption(f"사용 중인 표준불량명칭: data/[의류]표준불량명칭.xlsx, data/[잡화]표준불량명칭.xlsx (자동 로드)")
 
     panel_title("2단계: 불량상세 데이터 업로드")
 
@@ -644,13 +629,7 @@ def render_defect_tab():
                 key="dl_mapping",
             )
         with col2:
-            st.download_button(
-                "⬇️ 수정된 표준불량명칭.xlsx 다운로드",
-                data=std_path.read_bytes(),
-                file_name="표준불량명칭.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="dl_std",
-            )
+            pass  # 표준불량명칭 다운로드 버튼 제거 (data/ 폴더 파일 직접 관리)
 
         st.markdown("---")
         panel_title("📄 불량률 분석 보고서 (Word)")
