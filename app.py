@@ -506,69 +506,94 @@ def render_defect_tab():
             view = df
 
         # 컬럼 순서: defect_raw >> part >> 구분 >> 카테고리 >> 표준불량명
-        show_cols = ['file', 'report_no', 'date', 'factory',
-                     'defect_raw', 'part', 'product_type', 'category', 'std',
-                     'score', 'method', 'review', 'note']
+        display_cols = ['file', 'report_no', 'date', 'factory',
+                        'defect_raw', 'part', 'product_type', 'category', 'std',
+                        'score', 'method', 'review', 'note']
 
-        # 카테고리 목록 (중복 제거, 순서 유지)
-        _categories = list(dict.fromkeys([scat for _, scat, _ in std_names if scat]))
+        # 구분(의류/잡화/신발)별 카테고리·표준불량명 옵션 분리 구성
+        std_by_type_sess = st.session_state.get('std_by_type', {})
+        _type_opts = {}  # ptype → (categories, cat_map, display_opts, name_to_display)
+        for _pt in ['의류', '잡화', '신발']:
+            _src = std_by_type_sess.get(_pt) or std_by_type_sess.get('의류')
+            if not _src:
+                continue
+            _pnames, _ = _src
+            _cats = list(dict.fromkeys([sc for _, sc, _ in _pnames if sc]))
+            _cmap, _sbycat = {}, {}
+            for sname, scat, _ in _pnames:
+                lbl = f"[{scat}] {sname}" if scat else sname
+                _cmap[lbl] = sname
+                _sbycat.setdefault(scat or '기타', []).append(lbl)
+            _dopts = []
+            for cat in _cats:
+                _dopts.extend(_sbycat.get(cat, []))
+            _type_opts[_pt] = (_cats, _cmap, _dopts, {v: k for k, v in _cmap.items()})
 
-        # 카테고리별 표준불량명 옵션 구성 (카테고리순 정렬)
-        _cat_map = {}        # display → bare name
-        _std_by_cat = {}     # category → [display_label, ...]
-        for sname, scat, _ in std_names:
-            label = f"[{scat}] {sname}" if scat else sname
-            _cat_map[label] = sname
-            _std_by_cat.setdefault(scat or '기타', []).append(label)
-        # 카테고리 순서대로 전체 옵션 정렬
-        _display_opts = []
-        for cat in _categories:
-            _display_opts.extend(_std_by_cat.get(cat, []))
-        _name_to_display = {v: k for k, v in _cat_map.items()}
+        # view에 원본값 추적 컬럼 추가 (editor에서는 column_order로 숨김)
+        show_cols_all = ['file', 'report_no', 'date', 'factory',
+                         'defect_raw', 'part', 'product_type', 'category', 'std',
+                         'score', 'method', 'review', 'note']
+        view_edit = view[show_cols_all].reset_index(drop=True).copy()
+        view_edit['_orig_std']  = view['std'].reset_index(drop=True).values
+        view_edit['_orig_part'] = view['part'].reset_index(drop=True).values
 
-        # view 복사 후 std를 display 형식으로 변환
-        view_edit = view[show_cols].reset_index(drop=True).copy()
-        _orig_std  = view['std'].reset_index(drop=True).copy()
-        _orig_part = view['part'].reset_index(drop=True).copy()
-        view_edit['std'] = _orig_std.apply(
-            lambda n: _name_to_display.get(n, n) if n else ""
-        )
+        st.caption("💡 구분 탭에서 의류/잡화/신발을 선택 → 카테고리 드롭다운 → 표준불량명 드롭다운 순으로 선택하세요.")
 
-        st.caption(
-            "💡 **구분** 열로 의류/잡화/신발을 확인 → **카테고리** 선택 → "
-            "**표준불량명** 드롭다운에서 카테고리명을 입력하면 빠르게 찾을 수 있습니다."
-        )
-        edited = st.data_editor(
-            view_edit,
-            column_config={
-                "product_type": st.column_config.TextColumn(label="구분"),
-                "category": st.column_config.SelectboxColumn(
-                    label="카테고리",
-                    options=[""] + _categories,
-                    help="카테고리를 먼저 선택하세요 (참고용 — 표준불량명 선택 시 자동 갱신됩니다)",
-                ),
-                "std": st.column_config.SelectboxColumn(
-                    label="표준불량명",
-                    options=[""] + _display_opts,
-                    help="카테고리명을 입력하면 해당 불량명만 빠르게 검색됩니다 (예: '봉제' 입력)",
-                ),
-            },
-            disabled=[c for c in show_cols if c not in ('category', 'std')],
-            use_container_width=True,
-            height=420,
-            key="main_defect_editor",
-        )
+        ptypes_in_view = [pt for pt in ['의류', '잡화', '신발']
+                          if pt in view_edit['product_type'].values]
+        all_edited = {}  # ptype → (edited_df, cat_map)
+
+        if not ptypes_in_view:
+            st.info("표시할 항목이 없습니다.")
+        elif len(ptypes_in_view) == 1:
+            _containers = [st.container()]
+        else:
+            _containers = st.tabs(ptypes_in_view)
+
+        for _tc, _pt in zip(_containers, ptypes_in_view):
+            with _tc:
+                if _pt not in _type_opts:
+                    st.warning(f"{_pt} 표준불량명칭 파일이 없습니다.")
+                    continue
+                _cats, _cmap, _dopts, _n2d = _type_opts[_pt]
+                _pdf = view_edit[view_edit['product_type'] == _pt].reset_index(drop=True).copy()
+                _pdf['std'] = _pdf['_orig_std'].apply(lambda n: _n2d.get(n, n) if n else "")
+                if _pdf.empty:
+                    st.info(f"{_pt} 항목 없음")
+                    continue
+                _edited = st.data_editor(
+                    _pdf,
+                    column_order=display_cols,
+                    column_config={
+                        "product_type": st.column_config.TextColumn(label="구분"),
+                        "category": st.column_config.SelectboxColumn(
+                            label="카테고리",
+                            options=[""] + _cats,
+                            help=f"{_pt} 카테고리를 선택하세요",
+                        ),
+                        "std": st.column_config.SelectboxColumn(
+                            label="표준불량명",
+                            options=[""] + _dopts,
+                            help="카테고리명 입력 시 빠른 검색 가능 (예: '봉제')",
+                        ),
+                    },
+                    disabled=[c for c in display_cols if c not in ('category', 'std')],
+                    use_container_width=True,
+                    height=400,
+                    key=f"defect_editor_{_pt}",
+                )
+                all_edited[_pt] = (_edited, _cmap)
 
         if st.button("✅ 표준불량명 저장 및 재분석", key="save_correction_btn"):
             corrections = []
-            for i, row in edited.iterrows():
-                selected_display = row['std']
-                selected_name = _cat_map.get(selected_display, selected_display) if selected_display else ""
-                original_name = _orig_std.iloc[i] if i < len(_orig_std) else ""
-                part_name     = _orig_part.iloc[i] if i < len(_orig_part) else ""
-                # std가 변경된 경우만 저장 (category만 바뀐 경우는 무시)
-                if selected_name and selected_name != original_name:
-                    corrections.append({"part": part_name, "std": selected_name})
+            for _pt, (_edited, _cmap) in all_edited.items():
+                for _, row in _edited.iterrows():
+                    sel_disp = row['std']
+                    sel_name = _cmap.get(sel_disp, sel_disp) if sel_disp else ""
+                    orig_name = row.get('_orig_std', "")
+                    part_name = row.get('_orig_part', "")
+                    if sel_name and sel_name != orig_name:
+                        corrections.append({"part": part_name, "std": sel_name})
             if corrections:
                 added = save_corrections_to_std(str(std_path), corrections)
                 st.success(f"{added}개 별칭이 표준불량명칭.xlsx에 저장되었습니다. 재분석합니다...")
