@@ -68,6 +68,7 @@ def find_std_sheet(wb):
 
 # ── 표준불량명칭 로드 ────────────────────────────────────────────
 def load_standard(path):
+    import unicodedata
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = find_std_sheet(wb)
     used = ws.title
@@ -79,7 +80,7 @@ def load_standard(path):
         desc_str = _rich_text_to_str(desc)
         if c: cat = c
         if not name: continue
-        name = str(name).strip()
+        name = unicodedata.normalize('NFC', _rich_text_to_str(name) if not isinstance(name, str) else name).strip()
         if not name: continue
         names.append((name, cat, desc_str))
         adict[name] = name
@@ -311,7 +312,8 @@ def save_corrections_to_std(std_path: str, corrections: list, log_fn=None, ptype
 
 
 def norm(s):
-    return re.sub(r'\s+', '', str(s)).lower()
+    import unicodedata
+    return re.sub(r'\s+', '', unicodedata.normalize('NFC', str(s))).lower()
 
 
 def split_defect(raw):
@@ -397,6 +399,7 @@ def _load_sheet_names(wb, ptype: str):
 
 def load_standard_sheet(wb, ws) -> tuple:
     """워크시트 하나를 (names, adict) 로 파싱."""
+    import unicodedata
     names, adict, cat = [], {}, None
     for row in ws.iter_rows(min_row=2, values_only=True):
         if len(row) < 3:
@@ -408,7 +411,8 @@ def load_standard_sheet(wb, ws) -> tuple:
             cat = c
         if not name:
             continue
-        name = str(name).strip()
+        # 리치텍스트 대응 + 유니코드 NFC 정규화 (한글 조합형/완성형 불일치 방지)
+        name = unicodedata.normalize('NFC', _rich_text_to_str(name) if not isinstance(name, str) else name).strip()
         if not name:
             continue
         names.append((name, cat, desc_str))
