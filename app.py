@@ -23,6 +23,7 @@ try:
         load_standard, load_raw, build_mapping, mapping_to_records,
         calc_stats, build_excel, save_corrections_to_std,
         load_standard_typed, build_mapping_typed, classify_item_type,
+        remap_with_type,
     )
     from core.factory_ranking import (
         calc_factory_ranking, calc_region_heatmap, calc_factory_detail,
@@ -532,6 +533,7 @@ def render_defect_tab():
         view_edit = view[show_cols_all].reset_index(drop=True).copy()
         view_edit['_orig_std']  = view['std'].reset_index(drop=True).values
         view_edit['_orig_part'] = view['part'].reset_index(drop=True).values
+        view_edit['_orig_type'] = view['product_type'].reset_index(drop=True).values
 
         st.caption("💡 구분 탭에서 의류/잡화/신발을 선택 → 카테고리 드롭다운 → 표준불량명 드롭다운 순으로 선택하세요.")
 
@@ -564,7 +566,11 @@ def render_defect_tab():
                     _pdf,
                     column_order=display_cols,
                     column_config={
-                        "product_type": st.column_config.TextColumn(label="구분"),
+                        "product_type": st.column_config.SelectboxColumn(
+                            label="구분",
+                            options=['의류', '잡화', '신발'],
+                            help="의류/잡화/신발 구분을 수정할 수 있습니다. 저장 시 해당 구분 표준명으로 재매핑됩니다.",
+                        ),
                         "category": st.column_config.SelectboxColumn(
                             label="카테고리",
                             options=[""] + _cats,
@@ -576,7 +582,7 @@ def render_defect_tab():
                             help="카테고리명 입력 시 빠른 검색 가능 (예: '봉제')",
                         ),
                     },
-                    disabled=[c for c in display_cols if c not in ('category', 'std')],
+                    disabled=[c for c in display_cols if c not in ('category', 'std', 'product_type')],
                     use_container_width=True,
                     height=400,
                     key=f"defect_editor_{_pt}",
@@ -585,36 +591,99 @@ def render_defect_tab():
 
         if st.button("✅ 표준불량명 적용 및 재분석", key="save_correction_btn"):
             corrections = []
+            type_changes = {}          # defect_raw -> new_type
+            corrections_by_ptype = defaultdict(list)   # ptype -> [{part, std}]
+
             for _pt, (_edited, _cmap) in all_edited.items():
                 for _, row in _edited.iterrows():
-                    sel_disp = str(row.get('std', "") or "").strip()
-                    sel_name = _cmap.get(sel_disp, "") if sel_disp else ""
-                    orig_name = str(row.get('_orig_std', "") or "").strip()
-                    part_name = str(row.get('_orig_part', "") or "").strip()
+                    sel_disp   = str(row.get('std',          "") or "").strip()
+                    sel_name   = _cmap.get(sel_disp, "")          if sel_disp  else ""
+                    orig_name  = str(row.get('_orig_std',    "") or "").strip()
+                    part_name  = str(row.get('_orig_part',   "") or "").strip()
+                    orig_type  = str(row.get('_orig_type',   "") or "").strip()
+                    new_type   = str(row.get('product_type', "") or "").strip()
+                    defect_raw = str(row.get('defect_raw',   "") or "").strip()
+
+                    # 표준불량명 변경 감지
                     if sel_name and sel_name != orig_name and part_name:
                         corrections.append({"part": part_name, "std": sel_name})
+                        corrections_by_ptype[_pt].append({"part": part_name, "std": sel_name})
 
+                    # 구분(의류/잡화/신발) 변경 감지
+                    if new_type and new_type != orig_type and defect_raw:
+                        type_changes[defect_raw] = new_type
+
+            changed = False
+            msgs = []
+
+            # ── 1. 표준불량명 캐시 업데이트 ──────────────────────────
             if corrections:
-                # ── 파일 저장 없이 세션 캐시 직접 업데이트 ──────────────
                 _cache = st.session_state.cache
-                _catmap = st.session_state.catmap
                 _corr_map = {c['part']: c['std'] for c in corrections}
-
                 for raw, results in _cache.items():
                     new_res = []
                     for (p, s, sc, m, rv, n) in results:
                         if p in _corr_map:
-                            new_std = _corr_map[p]
-                            new_res.append((p, new_std, 100, '수동수정', False, '수동선택'))
+                            new_res.append((p, _corr_map[p], 100, '수동수정', False, '수동선택'))
                         else:
                             new_res.append((p, s, sc, m, rv, n))
                     _cache[raw] = new_res
-
                 st.session_state.cache = _cache
-                st.success(f"✅ {len(corrections)}개 항목 수정 완료. 결과가 즉시 반영됩니다.")
+                changed = True
+                msgs.append(f"표준불량명 {len(corrections)}개")
+
+                # ── 표준불량명칭 파일 설명란 업데이트 (빨간색 신규 별칭) ──
+                # 의류/잡화(신발) 파일별로 그룹화
+                _file_groups = {}
+                for _ptype, _corrs in corrections_by_ptype.items():
+                    if not _corrs:
+                        continue
+                    if _ptype in ('잡화', '신발'):
+                        _key      = '[잡화]표준불량명칭.xlsx'
+                        _dst_name = '[잡화]표준불량명칭_업데이트.xlsx'
+                    else:
+                        _key      = '[의류]표준불량명칭.xlsx'
+                        _dst_name = '[의류]표준불량명칭_업데이트.xlsx'
+                    if _key not in _file_groups:
+                        _file_groups[_key] = {'dst_name': _dst_name, 'ptype_corrs': []}
+                    _file_groups[_key]['ptype_corrs'].append((_ptype, _corrs))
+
+                _updated_std = {}
+                for _src_base, _grp in _file_groups.items():
+                    _src = DATA_DIR / _src_base
+                    if not _src.exists():
+                        continue
+                    _dst = tmpdir / _grp['dst_name']
+                    shutil.copy(str(_src), str(_dst))
+                    _total_added = 0
+                    for _ptype2, _corrs2 in _grp['ptype_corrs']:
+                        _eff = _ptype2 if _ptype2 in ('잡화', '신발') else None
+                        _total_added += save_corrections_to_std(str(_dst), _corrs2, ptype=_eff)
+                    if _total_added > 0:
+                        _updated_std[_src_base] = (_grp['dst_name'], _dst.read_bytes())
+
+                if _updated_std:
+                    st.session_state.updated_std_files = _updated_std
+
+            # ── 2. 구분 변경 적용 (raw_rows 업데이트 + 재매핑) ────────
+            if type_changes:
+                for _r in st.session_state.raw_rows:
+                    if _r['defect_raw'] in type_changes:
+                        _r['product_type'] = type_changes[_r['defect_raw']]
+                _std_by_type = st.session_state.std_by_type
+                _cache2 = st.session_state.cache
+                for _draw, _ntype in type_changes.items():
+                    _partial = remap_with_type([_draw], _ntype, _std_by_type)
+                    _cache2.update(_partial)
+                st.session_state.cache = _cache2
+                changed = True
+                msgs.append(f"구분 {len(type_changes)}개")
+
+            if changed:
+                st.success(f"✅ {' / '.join(msgs)} 항목 수정 완료. 결과가 즉시 반영됩니다.")
                 st.rerun()
             else:
-                st.info("변경된 항목이 없습니다. 셀을 클릭해 표준불량명을 선택한 뒤 저장하세요.")
+                st.info("변경된 항목이 없습니다. 셀을 클릭해 값을 선택한 뒤 저장하세요.")
 
         panel_title("다운로드")
         col1, col2 = st.columns(2)
@@ -629,7 +698,26 @@ def render_defect_tab():
                 key="dl_mapping",
             )
         with col2:
-            pass  # 표준불량명칭 다운로드 버튼 제거 (data/ 폴더 파일 직접 관리)
+            pass
+
+        # ── 업데이트된 표준불량명칭 다운로드 (수동 매핑 후 생성) ──────
+        _updated_std = st.session_state.get('updated_std_files', {})
+        if _updated_std:
+            panel_title("📥 업데이트된 표준불량명칭 다운로드")
+            st.caption(
+                "🔴 새로 추가된 별칭이 **빨간색**으로 설명란에 표시됩니다.  \n"
+                "📌 다운로드 후 GitHub `data/` 폴더에 같은 이름으로 업로드하면 영구 반영됩니다."
+            )
+            _dl_cols = st.columns(max(len(_updated_std), 1))
+            for _col, (_src_base, (_dst_name, _fbytes)) in zip(_dl_cols, _updated_std.items()):
+                with _col:
+                    st.download_button(
+                        f"⬇️ {_dst_name}",
+                        data=_fbytes,
+                        file_name=_dst_name,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key=f"dl_std_{_src_base.replace('[','').replace(']','').replace('.xlsx','')}",
+                    )
 
         st.markdown("---")
         panel_title("📄 불량률 분석 보고서 (Word)")
