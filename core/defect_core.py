@@ -244,17 +244,21 @@ def _to_int(val):
 
 
 # ── 수동 수정 내용을 표준불량명칭.xlsx에 저장 ─────────────────────
-def save_corrections_to_std(std_path: str, corrections: list[dict], log_fn=None) -> int:
+def save_corrections_to_std(std_path: str, corrections: list, log_fn=None, ptype: str = None) -> int:
     """
     corrections: [{"part": "봉재불량", "std": "봉제불량"}, ...]
     표준불량명칭.xlsx 의 해당 표준명 설명 컬럼에 별칭으로 추가.
+    ptype: '잡화' 또는 '신발'이면 해당 시트를 선택, 그 외(None/'의류')는 find_std_sheet 사용.
     반환: 추가된 별칭 수
     """
     if not corrections:
         return 0
 
     wb = openpyxl.load_workbook(std_path)
-    ws = find_std_sheet(wb)
+    if ptype and ptype in ('잡화', '신발'):
+        ws = _load_sheet_names(wb, ptype)
+    else:
+        ws = find_std_sheet(wb)
 
     # 표준명 → 설명 셀 매핑
     desc_cells = {}
@@ -525,6 +529,50 @@ def build_mapping_typed(raw_rows: list, std_by_type: dict, log_fn=None) -> tuple
     if log_fn: log_fn(f"매핑 완료: {total}개 불량명 처리")
     return cache, catmap
 
+
+def remap_with_type(defect_raws: list, ptype: str, std_by_type: dict) -> dict:
+    """
+    특정 product_type으로 defect_raw 목록을 재매핑.
+    구분(의류/잡화/신발) 변경 시 해당 유형의 표준명칭으로 재매핑하는 데 사용.
+    반환: cache 부분 업데이트용 dict {defect_raw: [(part, std, score, method, review, note), ...]}
+    """
+    actual_type = ptype if ptype in std_by_type else (
+        '의류' if '의류' in std_by_type else next(iter(std_by_type))
+    )
+    std_names, adict = std_by_type[actual_type]
+    slist  = [s[0] for s in std_names]
+    nalias = {norm(k): v for k, v in adict.items()}
+
+    def map_one(part):
+        part = part.strip()
+        if not part: return None, 0, '-', False, ''
+        if part in adict: return adict[part], 100, '정확일치', False, ''
+        pn = norm(part)
+        if pn in nalias: return nalias[pn], 100, '정확일치(정규화)', False, ''
+        bs, bv = 0, None
+        for k, v in adict.items():
+            kn = norm(k)
+            if len(kn) < 2: continue
+            if kn in pn or pn in kn:
+                sc = len(min(kn, pn, key=len)) / len(max(kn, pn, key=len)) * 100
+                if sc > bs and sc >= TH_HIGH: bs, bv = sc, v
+        if bv: return bv, int(bs), '별칭포함', False, ''
+        nk = [n for n in slist if '기타' not in n]
+        ki = [n for n in slist if '기타' in n]
+        bn, bsc = None, 0
+        for cands in [nk, ki]:
+            for n in cands:
+                sc = fuzz.token_sort_ratio(part, n)
+                if sc > bsc: bsc, bn = sc, n
+            if bsc >= TH_HIGH: break
+        if bsc >= TH_HIGH:   return bn, bsc, '퍼지매핑', False, ''
+        elif bsc >= TH_LOW:  return bn, bsc, '퍼지매핑', True, '수동검토필요'
+        else:                return None, bsc, '미매핑', True, '적합한표준명없음'
+
+    result = {}
+    for raw in defect_raws:
+        result[raw] = [(p,) + map_one(p) for p in split_defect(raw)]
+    return result
 
 
 # ── 매핑 결과를 JSON 직렬화 가능한 리스트로 변환 ────────────────────
