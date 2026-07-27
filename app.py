@@ -541,6 +541,7 @@ def render_defect_tab():
                           if pt in view_edit['product_type'].values]
         all_edited = {}  # ptype → (edited_df, cat_map)
 
+        _containers = []
         if not ptypes_in_view:
             st.info("표시할 항목이 없습니다.")
         elif len(ptypes_in_view) == 1:
