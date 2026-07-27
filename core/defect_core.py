@@ -171,7 +171,7 @@ def load_raw(file_paths, log_fn=None):
         for row in ws.iter_rows(min_row=data_start, values_only=True):
             d = row[dc] if len(row) > dc else None
             if not d: continue
-            ds = str(d).strip()
+            ds = __import__('unicodedata').normalize('NFC', str(d).strip())
             if not re.search(r'[가-힣a-zA-Z]', ds): continue
 
             # 날짜 직렬화
@@ -318,6 +318,9 @@ def norm(s):
 
 def split_defect(raw):
     # 슬래시/콤마 등으로 구분된 복합 불량명은 맨 앞 항목만 사용
+    # NFC 정규화: NFD(자모 분리형)로 저장된 한글이 fuzzy 매핑에서 score 0으로 처리되는 문제 방지
+    import unicodedata
+    raw = unicodedata.normalize('NFC', raw)
     parts = re.split(r'\s*[/,+&]\s*', raw)
     valid = [p.strip() for p in parts if p.strip() and re.search(r'[가-힣a-zA-Z]', p)]
     return valid[:1] if valid else []
