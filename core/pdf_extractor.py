@@ -188,7 +188,9 @@ def apply_filename_fallback(rec, filename):
 
 def normalize_country_to_region(country):
     country = normalize_space(country).upper()
-    return {"VIETNAM": "베트남", "KOREA": "한국", "CHINA": "중국", "MYANMAR": "미얀마"}.get(country, country or None)
+    _map = {"VIETNAM": "베트남", "VIET": "베트남", "VIET NAM": "베트남",
+            "KOREA": "한국", "CHINA": "중국", "MYANMAR": "미얀마"}
+    return _map.get(country, country or None)
 
 def normalize_local_region(region):
     region = normalize_space(region)
