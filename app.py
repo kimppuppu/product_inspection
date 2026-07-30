@@ -245,7 +245,20 @@ def run_mapping_analysis(raw_paths):
     raw_rows, skipped = load_raw(raw_paths)
 
     # 의류/잡화/신발 분류별 표준불량명칭 로드
-    std_by_type = load_standard_typed(str(DATA_DIR))
+    # 사용자 업로드 파일이 있으면 tmpdir에 복사 후 사용, 없으면 DATA_DIR 사용
+    _std_dir = str(DATA_DIR)
+    _uploaded_std = st.session_state.get('custom_std_files', {})
+    if _uploaded_std:
+        import shutil, tempfile as _tf
+        _tmp_std = tmpdir / "_std_override"
+        _tmp_std.mkdir(exist_ok=True)
+        # DATA_DIR 파일 복사 후 업로드 파일로 덮어쓰기
+        for f in DATA_DIR.glob("*.xlsx"):
+            shutil.copy(f, _tmp_std / f.name)
+        for fname, fbytes in _uploaded_std.items():
+            (_tmp_std / fname).write_bytes(fbytes)
+        _std_dir = str(_tmp_std)
+    std_by_type = load_standard_typed(_std_dir)
 
     # 분류별 typed 매핑 (raw_rows에 product_type 필드 추가됨)
     cache, catmap = build_mapping_typed(raw_rows, std_by_type)
@@ -399,7 +412,28 @@ def render_defect_tab():
     panel_title("📊 불량명 표준화 매핑")
 
     panel_title("1단계: 표준불량명칭 파일")
-    st.caption(f"사용 중인 표준불량명칭: data/[의류]표준불량명칭.xlsx, data/[잡화]표준불량명칭.xlsx (자동 로드)")
+    _use_custom_std = st.toggle("별도 표준불량명칭 파일 사용", value=bool(st.session_state.get('custom_std_files')))
+    if _use_custom_std:
+        st.caption("업로드한 파일이 기본 파일을 대체합니다. 파일명은 반드시 **[의류]표준불량명칭.xlsx** 또는 **[잡화]표준불량명칭.xlsx** 이어야 합니다.")
+        _std_uploads = st.file_uploader(
+            "표준불량명칭 파일 업로드 ([의류] 또는 [잡화])",
+            type=["xlsx"], accept_multiple_files=True, key="std_file_uploader"
+        )
+        if _std_uploads:
+            if 'custom_std_files' not in st.session_state:
+                st.session_state.custom_std_files = {}
+            for f in _std_uploads:
+                st.session_state.custom_std_files[f.name] = f.read()
+        if st.session_state.get('custom_std_files'):
+            for fname in st.session_state.custom_std_files:
+                st.success(f"✅ {fname} 적용 중")
+            if st.button("업로드 파일 초기화 (기본 파일로 복원)"):
+                st.session_state.custom_std_files = {}
+                st.rerun()
+    else:
+        if st.session_state.get('custom_std_files'):
+            st.session_state.custom_std_files = {}
+        st.caption("사용 중인 표준불량명칭: data/[의류]표준불량명칭.xlsx, data/[잡화]표준불량명칭.xlsx (자동 로드)")
 
     panel_title("2단계: 불량상세 데이터 업로드")
 
