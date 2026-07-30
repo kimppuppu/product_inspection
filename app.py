@@ -722,14 +722,21 @@ def render_defect_tab():
 
         st.markdown("---")
         panel_title("📄 불량률 분석 보고서 (Word)")
-        st.markdown("전체·업체별·공장별 불량률과 세부 불량 유형을 포함한 Word 보고서를 생성합니다.  \n※ 상위 5개 불량 유형 + 기타 · 차트 포함")
+        st.markdown("전체·업체별·공장별 불량률과 세부 불량 유형을 포함한 Word 보고서를 생성합니다.  \n※ 상위 7개 불량 유형 + 그외 · 차트 포함")
+        _orientation = st.radio(
+            "보고서 방향",
+            options=["세로형 (Portrait)", "가로형 (Landscape)"],
+            horizontal=True,
+            key="word_orientation",
+        )
+        _orient_val = "landscape" if "가로형" in _orientation else "portrait"
         try:
-            word_bytes = generate_word_report(raw_rows, cache)
+            word_bytes = generate_word_report(raw_rows, cache, orientation=_orient_val)
             today = datetime.now().strftime("%Y%m%d")
             st.download_button(
                 "📄 Word 보고서 다운로드",
                 data=word_bytes,
-                file_name=f"불량률분석보고서_{today}.docx",
+                file_name=f"불량률분석보고서_{today}_{_orient_val[:4]}.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 key="dl_word",
             )
