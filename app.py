@@ -285,7 +285,7 @@ def render_pdf_tab():
 
     panel_title("📄 불량보고서 PDF → Excel 변환")
 
-    BATCH = 50  # 한 번에 올릴 최대 개수
+    BATCH = 100  # 한 번에 올릴 최대 개수
 
     if "pdf_records" not in st.session_state:
         st.session_state.pdf_records = []
