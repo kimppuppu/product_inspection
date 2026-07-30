@@ -27,7 +27,7 @@ try:
 except ImportError:
     DOCX_OK = False
 
-TOP_N = 5  # 상위 N개 불량 유형 표시, 나머지는 기타
+TOP_N = 7  # 상위 N개 불량 유형 표시, 나머지는 기타
 
 # ── 색상 ─────────────────────────────────────────────────────────
 C_HEADER = RGBColor(0x1A, 0x35, 0x57) if DOCX_OK else None
@@ -530,8 +530,11 @@ def _make_table(doc, headers, rows_data, col_widths=None):
 
 # ── 보고서 생성 메인 ──────────────────────────────────────────────
 
-def generate_word_report(raw_rows: list, cache: dict) -> bytes:
-    """raw_rows + cache → .docx 파일 bytes 반환"""
+def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portrait') -> bytes:
+    """
+    raw_rows + cache → .docx 파일 bytes 반환
+    orientation: 'portrait'(세로형, 기본) | 'landscape'(가로형)
+    """
     if not DOCX_OK:
         raise RuntimeError("python-docx 설치 필요: pip install python-docx")
 
@@ -540,11 +543,32 @@ def generate_word_report(raw_rows: list, cache: dict) -> bytes:
     summary = data["summary"]
     avg     = summary["rate"]
 
+    # 방향별 페이지 설정
+    IS_LAND = (orientation == 'landscape')
+    _pw  = Cm(29.7) if IS_LAND else Cm(21)
+    _ph  = Cm(21)   if IS_LAND else Cm(29.7)
+    _lm  = Cm(2.0)  if IS_LAND else Cm(2.5)
+    _rm  = Cm(2.0)  if IS_LAND else Cm(2.5)
+    _tm  = Cm(2.0)  if IS_LAND else Cm(2.5)
+    _bm  = Cm(1.5)  if IS_LAND else Cm(2.0)
+    # 콘텐츠 폭 기준 차트 너비
+    CW_FULL = 23 if IS_LAND else 15   # 전폭 차트 (cm)
+    CW_HALF = 20 if IS_LAND else 13   # 반폭 차트 (cm)
+
     doc = Document()
     for sec in doc.sections:
-        sec.page_width    = Cm(21); sec.page_height   = Cm(29.7)
-        sec.left_margin   = Cm(2.5); sec.right_margin  = Cm(2.5)
-        sec.top_margin    = Cm(2.5); sec.bottom_margin = Cm(2.0)
+        sec.page_width    = _pw;  sec.page_height   = _ph
+        sec.left_margin   = _lm;  sec.right_margin  = _rm
+        sec.top_margin    = _tm;  sec.bottom_margin = _bm
+        if IS_LAND:
+            # 가로형: landscape 플래그 설정
+            from docx.oxml.ns import qn as _qn
+            from docx.oxml import OxmlElement as _OE
+            pgSz = sec._sectPr.find(_qn('w:pgSz'))
+            if pgSz is None:
+                pgSz = _OE('w:pgSz')
+                sec._sectPr.append(pgSz)
+            pgSz.set(_qn('w:orient'), 'landscape')
 
     # ── 제목 ──────────────────────────────────────────────────────
     p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -572,7 +596,7 @@ def generate_word_report(raw_rows: list, cache: dict) -> bytes:
 
     if MPL_OK and data["monthly"]:
         _spacer(doc)
-        _img_para(doc, _chart_monthly(data["monthly"], avg), 15)
+        _img_para(doc, _chart_monthly(data["monthly"], avg), CW_FULL)
 
     # ── 섹션2: 국가별 불량률 ─────────────────────────────────────
     _sec_title(doc, "2. 국가별 불량률")
@@ -592,7 +616,7 @@ def generate_word_report(raw_rows: list, cache: dict) -> bytes:
     _make_table(doc, ["국가명","검사수량(개)","불량수량(개)","불량률(%)","평균 대비"], rows2c)
     if MPL_OK and data["by_country"]:
         _spacer(doc)
-        _img_para(doc, _chart_country(data["by_country"], avg), 13)
+        _img_para(doc, _chart_country(data["by_country"], avg), CW_HALF)
 
     # ── 섹션3: 업체별 불량률 ─────────────────────────────────────
     _sec_title(doc, "3. 업체별 불량률")
@@ -612,7 +636,7 @@ def generate_word_report(raw_rows: list, cache: dict) -> bytes:
     _make_table(doc, ["업체명","검사수량(개)","불량수량(개)","불량률(%)","평균 대비"], rows3)
     if MPL_OK and data["by_client"]:
         _spacer(doc)
-        _img_para(doc, _chart_client(data["by_client"], avg), 13)
+        _img_para(doc, _chart_client(data["by_client"], avg), CW_HALF)
 
     # ── 섹션4: 품목 유형별 현황 ──────────────────────────────────
     _sec_title(doc, "4. 품목 유형별 현황 (의류 / 잡화 / 신발)")
@@ -631,10 +655,10 @@ def generate_word_report(raw_rows: list, cache: dict) -> bytes:
         _spacer(doc)
         img = _chart_item_type(data["by_item_type"])
         if img:
-            _img_para(doc, img, 14)
+            _img_para(doc, img, CW_HALF + 1)
 
     # ── 섹션5: 전체 세부 불량 유형 ───────────────────────────────
-    _sec_title(doc, f"5. 전체 세부 불량 유형  ※ 상위 {TOP_N}개 + 기타")
+    _sec_title(doc, f"5. 전체 세부 불량 유형  ※ 상위 {TOP_N}개 + 그외")
     cum = 0
     rows3 = []
     for d in data["defect_types"]:
@@ -648,9 +672,9 @@ def generate_word_report(raw_rows: list, cache: dict) -> bytes:
     _make_table(doc, ["불량 유형","건수","비율(%)","누적비율(%)"], rows3)
     if MPL_OK and data["defect_types"]:
         _spacer(doc)
-        _img_para(doc, _chart_defect(data["defect_types"]), 15)
+        _img_para(doc, _chart_defect(data["defect_types"]), CW_FULL)
 
-    # ── 섹션5: 업체별 세부 불량 유형 ─────────────────────────────
+    # ── 섹션6: 업체별 세부 불량 유형 ─────────────────────────────
     _sec_title(doc, "6. 업체별 세부 불량 유형")
     type_cols = data["top_type_names"]
     rows4 = []
@@ -662,7 +686,7 @@ def generate_word_report(raw_rows: list, cache: dict) -> bytes:
         rows4.append(row)
     _make_table(doc, ["업체명"] + type_cols, rows4)
 
-    # ── 섹션6: 공장별 불량률 ─────────────────────────────────────
+    # ── 섹션7: 공장별 불량률 ─────────────────────────────────────
     _sec_title(doc, "7. 공장별 불량률")
     rows5 = []
     for d in data["by_factory"]:
@@ -676,9 +700,9 @@ def generate_word_report(raw_rows: list, cache: dict) -> bytes:
     _make_table(doc, ["공장명","검사수량(개)","불량수량(개)","불량률(%)"], rows5)
     if MPL_OK and data["by_factory"]:
         _spacer(doc)
-        _img_para(doc, _chart_factory(data["by_factory"], avg), 15)
+        _img_para(doc, _chart_factory(data["by_factory"], avg), CW_FULL)
 
-    # ── 섹션7: 공장별 세부 불량 유형 ─────────────────────────────
+    # ── 섹션8: 공장별 세부 불량 유형 ─────────────────────────────
     _sec_title(doc, "8. 공장별 세부 불량 유형")
     rows6 = []
     for factory in [d["name"] for d in data["by_factory"]]:

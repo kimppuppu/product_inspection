@@ -23,8 +23,8 @@ except ImportError:
 TH_HIGH = 85
 TH_LOW  = 65
 
-# 최근 업데이트(별칭 추가)된 내용을 표시할 빨간색 글자
-RED_FONT = InlineFont(color="FFFF0000")
+# 최근 업데이트(별칭 추가)된 내용을 표시할 빨간색 글자 (9포인트, 기존 셀 크기와 동일)
+RED_FONT = InlineFont(color="FFFF0000", sz=9)
 
 
 def _rich_text_to_str(val) -> str:
@@ -292,17 +292,27 @@ def save_corrections_to_std(std_path: str, corrections: list, log_fn=None, ptype
         new_aliases[std].append(part)
 
     # 표준명별로 한 번에 반영 — 새로 추가된 부분만 빨간색으로 표시
-    # (이전에 추가되어 빨간색이었던 내용은 이번 업데이트 기준으로 일반 글자색으로 되돌아감)
     added = 0
     for std, parts in new_aliases.items():
         cell = desc_cells[std]
         current = _rich_text_to_str(cell.value).rstrip(", ").strip()
-        added_text = ", ".join(parts)
+
+        # 현재 셀 내용 기준으로 한 번 더 중복 제거 (같은 세션에서 여러 번 저장 방지)
+        cur_existing = {re.sub(r'\s+', '', x).lower()
+                        for x in re.split(r'[,/\n]', current) if x.strip()}
+        unique_parts = list(dict.fromkeys(  # 순서 보존 + 리스트 내 중복 제거
+            p for p in parts
+            if re.sub(r'\s+', '', p).lower() not in cur_existing
+        ))
+        if not unique_parts:
+            continue
+
+        added_text = ", ".join(unique_parts)
         if current:
             cell.value = CellRichText([current, TextBlock(RED_FONT, ", " + added_text)])
         else:
             cell.value = CellRichText([TextBlock(RED_FONT, added_text)])
-        added += len(parts)
+        added += len(unique_parts)
         if log_fn: log_fn(f"  ✅ '{std}' 에 별칭 추가: '{added_text}'")
 
     if added > 0:
