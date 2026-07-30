@@ -698,9 +698,22 @@ def render_defect_tab():
 
             # ── 2. 구분 변경 적용 (raw_rows 업데이트 + 재매핑) ────────
             if type_changes:
+                # defect_raw → new_type 기반으로 report_no별 new_type 도출
+                report_to_type = {}
                 for _r in st.session_state.raw_rows:
                     if _r['defect_raw'] in type_changes:
+                        _rno = _r.get('report_no', '')
+                        if _rno:
+                            report_to_type[_rno] = type_changes[_r['defect_raw']]
+
+                # 같은 접수번호(report_no)의 모든 행을 동일한 구분으로 변경
+                for _r in st.session_state.raw_rows:
+                    _rno = _r.get('report_no', '')
+                    if _rno and _rno in report_to_type:
+                        _r['product_type'] = report_to_type[_rno]
+                    elif _r['defect_raw'] in type_changes:
                         _r['product_type'] = type_changes[_r['defect_raw']]
+
                 _std_by_type = st.session_state.std_by_type
                 _cache2 = st.session_state.cache
                 for _draw, _ntype in type_changes.items():
@@ -708,7 +721,7 @@ def render_defect_tab():
                     _cache2.update(_partial)
                 st.session_state.cache = _cache2
                 changed = True
-                msgs.append(f"구분 {len(type_changes)}개")
+                msgs.append(f"구분 {len(type_changes)}개 (접수번호 동일 항목 전체 적용)")
 
             if changed:
                 st.success(f"✅ {' / '.join(msgs)} 항목 수정 완료. 결과가 즉시 반영됩니다.")
