@@ -44,7 +44,7 @@ except Exception as _e:
     _IMPORT_ERROR = traceback.format_exc()
 
 st.set_page_config(
-    page_title="제품평가 업무관리",
+    page_title="불량보고서 분석 시스템",
     page_icon="📋",
     layout="wide",
 )
@@ -177,7 +177,8 @@ st.markdown("""
     </div>
     <div class="fiti-divider"></div>
     <div>
-      <div class="fiti-app-name">제품평가 업무관리</div>
+      <div class="fiti-app-name">불량보고서 분석 시스템</div>
+      <div style="font-size:0.75rem;color:#b0bec5;margin-top:2px;">Defect Report Analysis System</div>
       <div class="fiti-app-sub">Product Quality Evaluation Management System</div>
     </div>
   </div>
@@ -1199,15 +1200,13 @@ with st.expander("ℹ️ 사용 안내", expanded=False):
     st.markdown(
         "- **PDF → Excel 변환**: 불량보고서 PDF를 업로드하면 통합 Excel 파일로 변환합니다.\n"
         "- **불량명 표준화**: 불량상세 데이터를 업로드하면 표준 불량명으로 자동 매핑하고, 미매핑/검토 항목을 수동으로 수정할 수 있습니다.\n"
-        "- **공장·지역 분석**: (불량명 표준화 탭에서 분석 완료 후) 공장별·지역별 불량률 랭킹, 추이, PDF 보고서를 확인합니다.\n"
-        "- **실적 분석**: 실적 rawdata를 업로드하면 월별·브랜드·바이어별 실적을 분석합니다."
+        "- **공장·지역 분석**: (불량명 표준화 탭에서 분석 완료 후) 공장별·지역별 불량률 랭킹, 추이, PDF 보고서를 확인합니다."
     )
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3 = st.tabs([
     "📄 PDF → Excel",
     "📊 불량명 표준화",
     "🏗️ 공장·지역 분석",
-    "📈 실적 분석",
 ])
 
 def _tab(fn, label):
@@ -1226,5 +1225,3 @@ with tab2:
     _tab(render_defect_tab, "불량명 탭")
 with tab3:
     _tab(render_factory_tab, "공장 탭")
-with tab4:
-    _tab(render_performance_tab, "실적 탭")
