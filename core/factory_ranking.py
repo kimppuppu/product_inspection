@@ -181,13 +181,13 @@ def calc_factory_detail(raw_rows: list[dict], cache: dict,
         for m, d in sorted(monthly.items()) if m != 'unknown'
     ]
 
-    # 불량 유형 TOP5 (표준불량명 기준)
+    # 불량 유형 TOP7 (표준불량명 기준)
     std_count: dict[str, int] = defaultdict(int)
     for r in rows:
         for (part, std, sc, meth, rev, note) in cache.get(r['defect_raw'], []):
             if std:
                 std_count[std] += r.get('qty_total', 0) or 0
-    top5 = sorted(std_count.items(), key=lambda x: -x[1])[:5]
+    top5 = sorted(std_count.items(), key=lambda x: -x[1])[:7]
     total_defect_sum = sum(std_count.values()) or 1
 
     # 바이어 목록
