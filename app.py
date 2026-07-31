@@ -850,6 +850,39 @@ def render_factory_tab():
     else:
         st.info("지역별 데이터가 없습니다.")
 
+    panel_title("📊 불량 유형 TOP 7")
+    from collections import Counter as _Counter
+    _filtered_rows = [r for r in raw_rows
+                      if (not start or r.get('ym','') >= start)
+                      and (not end   or r.get('ym','') <= end)
+                      and (buyer == '전체' or r.get('buyer','') == buyer)
+                      and (item  == '전체' or r.get('item','')  == item)]
+    _std_counter = _Counter()
+    for _r in _filtered_rows:
+        for (_p, _s, _sc, _m, _rv, _n) in cache.get(_r['defect_raw'], []):
+            if _s:
+                _std_counter[_s] += _r.get('qty_total', 0) or 0
+    if _std_counter:
+        _top7 = _std_counter.most_common(7)
+        _others = sum(_std_counter.values()) - sum(v for _, v in _top7)
+        _total_qty = sum(_std_counter.values()) or 1
+        _top7_rows = [{'불량유형': n, '불량수량': q, '비율(%)': round(q/_total_qty*100,1)} for n,q in _top7]
+        if _others > 0:
+            _top7_rows.append({'불량유형': '그외', '불량수량': _others, '비율(%)': round(_others/_total_qty*100,1)})
+        _top7_df = pd.DataFrame(_top7_rows)
+        _top7_df.index = _top7_df.index + 1
+        col_chart, col_tbl = st.columns([3, 2])
+        with col_chart:
+            _fig_top = px.bar(_top7_df[_top7_df['불량유형']!='그외'], x='불량수량', y='불량유형',
+                              orientation='h', text='비율(%)',
+                              color_discrete_sequence=['#1A3A5C'])
+            _fig_top.update_layout(yaxis={'categoryorder':'total ascending'}, height=320, margin=dict(l=0,r=0,t=20,b=0))
+            st.plotly_chart(_fig_top, use_container_width=True)
+        with col_tbl:
+            st.dataframe(_top7_df, use_container_width=True, height=320)
+    else:
+        st.info("표시할 불량 유형 데이터가 없습니다.")
+
     panel_title("💬 코멘트")
     if ranking:
         period = f"{start} ~ {end}" if start and end else "전체기간"
@@ -883,10 +916,11 @@ def render_factory_tab():
                     st.plotly_chart(fig2, use_container_width=True)
 
                 if detail['top5_defects']:
-                    st.markdown("**불량 유형 TOP5**")
+                    st.markdown("**불량 유형 TOP7**")
                     top5_df = pd.DataFrame(detail['top5_defects']).rename(
                         columns={'name': '불량명', 'qty': '수량', 'pct': '비율(%)'}
                     )
+                    top5_df.index = top5_df.index + 1
                     st.dataframe(top5_df, use_container_width=True)
 
                 pdf_bytes = generate_factory_pdf(detail)
