@@ -852,9 +852,10 @@ def render_factory_tab():
 
     panel_title("📊 불량 유형 TOP 7")
     from collections import Counter as _Counter
+    from core.factory_ranking import _parse_date as _pd
     _filtered_rows = [r for r in raw_rows
-                      if (not start or r.get('ym','') >= start)
-                      and (not end   or r.get('ym','') <= end)
+                      if (not start or (_pd(r.get('date')) or '') >= start)
+                      and (not end   or (_pd(r.get('date')) or '') <= end)
                       and (buyer == '전체' or r.get('buyer','') == buyer)
                       and (item  == '전체' or r.get('item','')  == item)]
     _std_counter = _Counter()
