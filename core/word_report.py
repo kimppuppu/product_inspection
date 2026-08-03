@@ -47,11 +47,15 @@ PALETTE = [MN, MB, ML, MR, MO, MG, "#8E44AD", "#16A085", "#D35400", "#2C3E50"]
 import os
 WORD_FONT = "맑은 고딕"
 _FONT_PATHS = [
-    r"C:\Windows\Fonts\malgun.ttf",
-    r"C:\Windows\Fonts\gulim.ttc",
-    r"C:\Windows\Fonts\batang.ttc",
+    r"C:\Windows\Fonts\malgun.ttf",          # Windows 맑은 고딕
+    r"C:\Windows\Fonts\gulim.ttc",           # Windows 굴림
+    r"C:\Windows\Fonts\batang.ttc",          # Windows 바탕
+    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",          # Linux Nanum
+    "/usr/share/fonts/truetype/nanum/NanumBarunGothic.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",   # Noto CJK
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
 ]
-_MPL_FONT = "DejaVu Sans"
+_MPL_FONT = None
 if MPL_OK:
     for _fp in _FONT_PATHS:
         if os.path.exists(_fp):
@@ -61,7 +65,19 @@ if MPL_OK:
                 break
             except Exception:
                 pass
-    plt.rcParams['font.family'] = _MPL_FONT
+    if _MPL_FONT:
+        plt.rcParams['font.family'] = _MPL_FONT
+    else:
+        # 시스템에 등록된 한글 가능 폰트 탐색
+        for _fn in ['Malgun Gothic', 'NanumGothic', 'NanumBarunGothic',
+                    'Apple SD Gothic Neo', 'AppleGothic']:
+            try:
+                fm.findfont(fm.FontProperties(family=_fn), fallback_to_default=False)
+                plt.rcParams['font.family'] = _fn
+                _MPL_FONT = _fn
+                break
+            except Exception:
+                pass
     plt.rcParams['axes.unicode_minus'] = False
 
 
@@ -318,22 +334,20 @@ def _chart_item_type(by_item_type):
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 3.5))
 
-    # 파이차트 (검사수량 비율)
     wedges, texts, autotexts = ax1.pie(
         inspec, labels=names, autopct='%1.1f%%',
         colors=colors_pie, startangle=90,
         textprops={'fontsize': 9},
     )
-    ax1.set_title('Inspection Volume by Type', fontsize=10, fontweight='bold')
+    ax1.set_title('품목 유형별 검사 비율', fontsize=10, fontweight='bold')
 
-    # 불량률 바차트
     bar_colors = [MB, MR, '#F4A261'][:len(names)]
     bars = ax2.bar(names, rates, color=bar_colors, width=0.4)
     for b, r in zip(bars, rates):
         ax2.text(b.get_x() + b.get_width()/2, b.get_height() + 0.03,
                  f'{r:.2f}%', ha='center', va='bottom', fontsize=9)
-    ax2.set_ylabel('Defect Rate (%)', fontsize=9)
-    ax2.set_title('Defect Rate by Type', fontsize=10, fontweight='bold')
+    ax2.set_ylabel('불량률 (%)', fontsize=9)
+    ax2.set_title('품목 유형별 불량률', fontsize=10, fontweight='bold')
     ax2.set_ylim(0, max(rates)*1.4 if rates else 10)
     ax2.tick_params(axis='x', labelsize=9)
     ax2.grid(axis='y', alpha=0.3)
@@ -352,13 +366,13 @@ def _chart_country(by_country, avg_rate):
     bars = ax.bar(names, rates, color=colors, width=0.5)
     if avg_rate:
         ax.axhline(avg_rate, color=MN, linewidth=1.5, linestyle='--',
-                   label=f'Avg {avg_rate:.2f}%')
+                   label=f'평균 {avg_rate:.2f}%')
     for b, r in zip(bars, rates):
         ax.text(b.get_x() + b.get_width()/2, b.get_height() + 0.04,
                 f'{r:.2f}%', ha='center', va='bottom', fontsize=9)
     ax.set_ylim(0, max(rates) * 1.3 if rates else 10)
-    ax.set_ylabel('Defect Rate (%)', fontsize=9)
-    ax.set_title('Defect Rate by Country', fontsize=11, fontweight='bold')
+    ax.set_ylabel('불량률 (%)', fontsize=9)
+    ax.set_title('국가별 불량률', fontsize=11, fontweight='bold')
     ax.tick_params(axis='x', labelsize=9)
     ax.legend(fontsize=8)
     ax.grid(axis='y', alpha=0.3)
@@ -375,13 +389,13 @@ def _chart_monthly(monthly, avg_rate):
     bars = ax.bar(months, rates, color=MB, width=0.5, zorder=2)
     if avg_rate:
         ax.axhline(avg_rate, color=MR, linewidth=1.5, linestyle='--',
-                   label=f'Avg {avg_rate:.2f}%')
+                   label=f'평균 {avg_rate:.2f}%')
     for b, r in zip(bars, rates):
         ax.text(b.get_x() + b.get_width()/2, b.get_height() + 0.05,
                 f'{r:.2f}%', ha='center', va='bottom', fontsize=8)
     ax.set_ylim(0, max(rates) * 1.3 if rates else 10)
-    ax.set_ylabel('Defect Rate (%)', fontsize=9)
-    ax.set_title('Monthly Defect Rate Trend', fontsize=11, fontweight='bold')
+    ax.set_ylabel('불량률 (%)', fontsize=9)
+    ax.set_title('월별 불량률 추이', fontsize=11, fontweight='bold')
     ax.tick_params(axis='x', labelsize=8, rotation=20)
     ax.legend(fontsize=8)
     ax.grid(axis='y', alpha=0.3, zorder=1)
@@ -399,13 +413,13 @@ def _chart_client(by_client, avg_rate):
     bars = ax.barh(names, rates, color=colors, height=0.5)
     if avg_rate:
         ax.axvline(avg_rate, color=MN, linewidth=1.5, linestyle='--',
-                   label=f'Avg {avg_rate:.2f}%')
+                   label=f'평균 {avg_rate:.2f}%')
     for b, r in zip(bars, rates):
         ax.text(r + 0.05, b.get_y() + b.get_height()/2,
                 f'{r:.2f}%', va='center', fontsize=8)
     ax.set_xlim(0, max(rates) * 1.3 if rates else 10)
-    ax.set_xlabel('Defect Rate (%)', fontsize=9)
-    ax.set_title('Defect Rate by Client', fontsize=11, fontweight='bold')
+    ax.set_xlabel('불량률 (%)', fontsize=9)
+    ax.set_title('업체별 불량률', fontsize=11, fontweight='bold')
     ax.tick_params(axis='y', labelsize=8)
     ax.legend(fontsize=8)
     ax.grid(axis='x', alpha=0.3)
@@ -422,15 +436,15 @@ def _chart_defect(defect_types):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9, 3.5))
     ax1.pie(counts, labels=labels, colors=pal, autopct='%1.1f%%',
             startangle=90, textprops={'fontsize': 7}, pctdistance=0.82)
-    ax1.set_title('Defect Type Distribution', fontsize=10, fontweight='bold')
+    ax1.set_title('불량 유형 분포', fontsize=10, fontweight='bold')
     x_idx = range(len(counts))
     ax2.bar(x_idx, counts, color=pal, width=0.55)
     for i, c in enumerate(counts):
         ax2.text(i, c + max(counts)*0.02, str(c), ha='center', va='bottom', fontsize=8)
     ax2.set_xticks(list(x_idx))
     ax2.set_xticklabels([f"#{i+1}" for i in range(len(counts))], fontsize=9)
-    ax2.set_ylabel('Count', fontsize=9)
-    ax2.set_title('Defect Count by Type', fontsize=10, fontweight='bold')
+    ax2.set_ylabel('건수', fontsize=9)
+    ax2.set_title('불량 유형별 건수', fontsize=10, fontweight='bold')
     ax2.grid(axis='y', alpha=0.3)
     ax2.spines['top'].set_visible(False)
     ax2.spines['right'].set_visible(False)
@@ -446,13 +460,13 @@ def _chart_factory(by_factory, avg_rate):
     bars = ax.bar(names, rates, color=colors, width=0.5)
     if avg_rate:
         ax.axhline(avg_rate, color=MN, linewidth=1.5, linestyle='--',
-                   label=f'Avg {avg_rate:.2f}%')
+                   label=f'평균 {avg_rate:.2f}%')
     for b, r in zip(bars, rates):
         ax.text(b.get_x() + b.get_width()/2, b.get_height() + 0.04,
                 f'{r:.2f}%', ha='center', va='bottom', fontsize=8)
     ax.set_ylim(0, max(rates) * 1.3 if rates else 10)
-    ax.set_ylabel('Defect Rate (%)', fontsize=9)
-    ax.set_title('Defect Rate by Factory', fontsize=11, fontweight='bold')
+    ax.set_ylabel('불량률 (%)', fontsize=9)
+    ax.set_title('공장별 불량률', fontsize=11, fontweight='bold')
     ax.tick_params(axis='x', labelsize=8, rotation=15)
     ax.legend(fontsize=8)
     ax.grid(axis='y', alpha=0.3)
@@ -462,7 +476,7 @@ def _chart_factory(by_factory, avg_rate):
     return _fig_bytes(fig)
 
 
-# ── 1차 / 최종 이중 바차트 ────────────────────────────────────────
+# ── 1차 / 최종 이중 바차트 (수정합격률 없음) ──────────────────────
 
 def _chart_monthly_dual(monthly, avg1, avg2):
     """1차 / 최종 불량률 월별 이중 바차트"""
@@ -488,8 +502,8 @@ def _chart_monthly_dual(monthly, avg1, avg2):
             ax.text(b.get_x() + b.get_width()/2, b.get_height() + 0.03,
                     f'{r:.2f}%', ha='center', va='bottom', fontsize=7, color=MR)
     ax.set_xticks(x); ax.set_xticklabels(months, rotation=20, fontsize=8)
-    ax.set_ylabel('Defect Rate (%)', fontsize=9)
-    ax.set_title('Monthly Defect Rate Trend  (1차 vs 최종)', fontsize=11, fontweight='bold')
+    ax.set_ylabel('불량률 (%)', fontsize=9)
+    ax.set_title('월별 불량률 추이  (1차 / 최종)', fontsize=11, fontweight='bold')
     ax.legend(fontsize=8, ncol=2); ax.grid(axis='y', alpha=0.3, zorder=1)
     ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
     fig.tight_layout(); return _fig_bytes(fig)
@@ -511,8 +525,8 @@ def _chart_country_dual(by_country, avg1, avg2):
         ax.axhline(avg2, color=MR, linewidth=1.2, linestyle='--', alpha=0.7,
                    label=f'최종 평균 {avg2:.2f}%')
     ax.set_xticks(x); ax.set_xticklabels(names, fontsize=9)
-    ax.set_ylabel('Defect Rate (%)', fontsize=9)
-    ax.set_title('Defect Rate by Country  (1차 vs 최종)', fontsize=11, fontweight='bold')
+    ax.set_ylabel('불량률 (%)', fontsize=9)
+    ax.set_title('국가별 불량률  (1차 / 최종)', fontsize=11, fontweight='bold')
     ax.legend(fontsize=8, ncol=2); ax.grid(axis='y', alpha=0.3)
     ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
     fig.tight_layout(); return _fig_bytes(fig)
@@ -534,10 +548,107 @@ def _chart_client_dual(by_client, avg1, avg2):
         ax.axvline(avg2, color=MR, linewidth=1.2, linestyle='--', alpha=0.7,
                    label=f'최종 평균 {avg2:.2f}%')
     ax.set_yticks(x); ax.set_yticklabels(names, fontsize=8)
-    ax.set_xlabel('Defect Rate (%)', fontsize=9)
-    ax.set_title('Defect Rate by Client  (1차 vs 최종)', fontsize=11, fontweight='bold')
+    ax.set_xlabel('불량률 (%)', fontsize=9)
+    ax.set_title('업체별 불량률  (1차 / 최종)', fontsize=11, fontweight='bold')
     ax.legend(fontsize=8, ncol=2); ax.grid(axis='x', alpha=0.3)
     ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    fig.tight_layout(); return _fig_bytes(fig)
+
+
+# ── 전체 모드: 1차 / 최종 바 + 수정합격률 라인 (twin y-axis) ──────
+
+def _chart_monthly_all(monthly, avg1, avg2, avg_corr):
+    """전체 모드 - 월별 1차/최종 바 + 수정합격률 꺾은선 (우측 축)"""
+    months = [d["month"] for d in monthly]
+    rates1 = [d["rate"] for d in monthly]
+    rates2 = [d.get("final_rate", 0) for d in monthly]
+    corr   = [d.get("correction_rate", 0) for d in monthly]
+    x = list(range(len(months))); width = 0.3
+    fig, ax = plt.subplots(figsize=(max(9, len(months) * 0.9), 4))
+    b1 = ax.bar([i - width for i in x], rates1, width, color=MB, label='1차 불량률', zorder=2)
+    b2 = ax.bar([i         for i in x], rates2, width, color=MR, label='최종 불량률', zorder=2)
+    if avg1: ax.axhline(avg1, color=MB, lw=1, ls='--', alpha=0.6, label=f'1차 평균 {avg1:.2f}%')
+    if avg2: ax.axhline(avg2, color=MR, lw=1, ls='--', alpha=0.6, label=f'최종 평균 {avg2:.2f}%')
+    for b, r in zip(b1.patches, rates1):
+        if r > 0:
+            ax.text(b.get_x()+b.get_width()/2, b.get_height()+0.03,
+                    f'{r:.2f}%', ha='center', va='bottom', fontsize=6.5, color=MB)
+    for b, r in zip(b2.patches, rates2):
+        if r > 0:
+            ax.text(b.get_x()+b.get_width()/2, b.get_height()+0.03,
+                    f'{r:.2f}%', ha='center', va='bottom', fontsize=6.5, color=MR)
+    ax2 = ax.twinx()
+    ax2.plot(x, corr, color=MG, lw=2, marker='o', ms=5, label='수정합격률', zorder=3)
+    if avg_corr: ax2.axhline(avg_corr, color=MG, lw=1, ls='--', alpha=0.6)
+    ax2.set_ylabel('수정합격률 (%)', fontsize=9, color=MG)
+    ax2.tick_params(axis='y', labelcolor=MG, labelsize=8)
+    ax2.set_ylim(0, 130)
+    ax.set_xticks(x); ax.set_xticklabels(months, rotation=20, fontsize=8)
+    ax.set_ylabel('불량률 (%)', fontsize=9); ax.set_ylim(bottom=0)
+    ax.set_title('월별 불량률 추이  (1차 / 최종 / 수정합격률)', fontsize=11, fontweight='bold')
+    lines1, lbl1 = ax.get_legend_handles_labels()
+    lines2, lbl2 = ax2.get_legend_handles_labels()
+    ax.legend(lines1+lines2, lbl1+lbl2, fontsize=7.5, ncol=3)
+    ax.grid(axis='y', alpha=0.3, zorder=1)
+    ax.spines['top'].set_visible(False)
+    fig.tight_layout(); return _fig_bytes(fig)
+
+
+def _chart_country_all(by_country, avg1, avg2, avg_corr):
+    """전체 모드 - 국가별 1차/최종 바 + 수정합격률 라인"""
+    names  = [d["name"] for d in by_country]
+    rates1 = [d["rate"] for d in by_country]
+    rates2 = [d.get("final_rate", 0) for d in by_country]
+    corr   = [d.get("correction_rate", 0) for d in by_country]
+    x = list(range(len(names))); width = 0.28
+    fig, ax = plt.subplots(figsize=(max(6, len(names)*1.5), 3.8))
+    ax.bar([i - width for i in x], rates1, width, color=MB, label='1차 불량률')
+    ax.bar([i         for i in x], rates2, width, color=MR, label='최종 불량률')
+    if avg1: ax.axhline(avg1, color=MB, lw=1, ls='--', alpha=0.6, label=f'1차 평균 {avg1:.2f}%')
+    if avg2: ax.axhline(avg2, color=MR, lw=1, ls='--', alpha=0.6, label=f'최종 평균 {avg2:.2f}%')
+    ax2 = ax.twinx()
+    ax2.plot(x, corr, color=MG, lw=2, marker='o', ms=6, label='수정합격률', zorder=3)
+    if avg_corr: ax2.axhline(avg_corr, color=MG, lw=1, ls='--', alpha=0.6)
+    ax2.set_ylabel('수정합격률 (%)', fontsize=9, color=MG)
+    ax2.tick_params(axis='y', labelcolor=MG, labelsize=8)
+    ax2.set_ylim(0, 130)
+    ax.set_xticks(x); ax.set_xticklabels(names, fontsize=9)
+    ax.set_ylabel('불량률 (%)', fontsize=9); ax.set_ylim(bottom=0)
+    ax.set_title('국가별 불량률  (1차 / 최종 / 수정합격률)', fontsize=11, fontweight='bold')
+    lines1, lbl1 = ax.get_legend_handles_labels()
+    lines2, lbl2 = ax2.get_legend_handles_labels()
+    ax.legend(lines1+lines2, lbl1+lbl2, fontsize=7.5, ncol=3)
+    ax.grid(axis='y', alpha=0.3)
+    ax.spines['top'].set_visible(False)
+    fig.tight_layout(); return _fig_bytes(fig)
+
+
+def _chart_client_all(by_client, avg1, avg2, avg_corr):
+    """전체 모드 - 업체별 1차/최종 수평 바 + 수정합격률 산점도"""
+    names  = [d["name"] for d in by_client]
+    rates1 = [d["rate"] for d in by_client]
+    rates2 = [d.get("final_rate", 0) for d in by_client]
+    corr   = [d.get("correction_rate", 0) for d in by_client]
+    x = list(range(len(names))); width = 0.3
+    fig, ax = plt.subplots(figsize=(8, max(3.5, len(names)*0.6+1)))
+    ax.barh([i+width/2 for i in x], rates1, width, color=MB, label='1차 불량률')
+    ax.barh([i-width/2 for i in x], rates2, width, color=MR, label='최종 불량률')
+    if avg1: ax.axvline(avg1, color=MB, lw=1, ls='--', alpha=0.6, label=f'1차 평균 {avg1:.2f}%')
+    if avg2: ax.axvline(avg2, color=MR, lw=1, ls='--', alpha=0.6, label=f'최종 평균 {avg2:.2f}%')
+    ax2 = ax.twiny()
+    ax2.scatter(corr, x, color=MG, s=60, marker='D', label='수정합격률', zorder=3)
+    if avg_corr: ax2.axvline(avg_corr, color=MG, lw=1, ls='--', alpha=0.6)
+    ax2.set_xlabel('수정합격률 (%)', fontsize=9, color=MG)
+    ax2.tick_params(axis='x', labelcolor=MG, labelsize=8)
+    ax2.set_xlim(0, 130)
+    ax.set_yticks(x); ax.set_yticklabels(names, fontsize=8)
+    ax.set_xlabel('불량률 (%)', fontsize=9); ax.set_xlim(left=0)
+    ax.set_title('업체별 불량률  (1차 / 최종 / 수정합격률)', fontsize=11, fontweight='bold')
+    lines1, lbl1 = ax.get_legend_handles_labels()
+    lines2, lbl2 = ax2.get_legend_handles_labels()
+    ax.legend(lines1+lines2, lbl1+lbl2, fontsize=7.5, ncol=3)
+    ax.grid(axis='x', alpha=0.3)
+    ax.spines['top'].set_visible(False)
     fig.tight_layout(); return _fig_bytes(fig)
 
 
@@ -660,8 +771,10 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
     period  = data["period"]
     summary = data["summary"]
     avg     = summary["rate"]
-    IS_DUAL = report_mode in ('전체', '1차 불량률 + 최종 불량률')
+    IS_ALL  = (report_mode == '전체')                         # 1차+최종+수정합격률
+    IS_DUAL = (report_mode == '1차 불량률 + 최종 불량률')     # 1차+최종만 (수정합격률 없음)
     IS_1ST  = (report_mode == '1차 불량률')
+    IS_ANY_DUAL = IS_ALL or IS_DUAL                           # 1차+최종 표시 공통 조건
     avg_final = summary.get("final_rate", 0.0)
     avg_corr  = summary.get("correction", 0.0)
 
@@ -702,9 +815,8 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
     _hr(doc)
 
     # ── 섹션1: 전체 불량률 요약 ───────────────────────────────────
-    _title1 = "1. 전체 불량률 요약  (1차 / 최종 구분)" if IS_DUAL else "1. 전체 불량률 요약"
-    _sec_title(doc, _title1)
-    if IS_DUAL:
+    if IS_ALL:
+        _sec_title(doc, "1. 전체 불량률 요약  (1차 / 최종 / 수정합격률)")
         _hdrs1 = ["총 검사수량", "1차 불량수량", "1차 불량률", "최종 불량수량", "최종 불량률", "수정 합격률"]
         _vals1 = [f"{summary['inspec']:,} 개",
                   f"{summary['defect']:,} 개", f"{avg:.2f} %",
@@ -719,7 +831,23 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
             _ct(cell, v, bold=True, sz=12,
                 color=(C_RED if i in (2, 4) else (C_GREEN if i == 5 else C_DARK)))
             _shd(cell, "F7FBFF"); _bdr(cell)
+    elif IS_DUAL:
+        _sec_title(doc, "1. 전체 불량률 요약  (1차 / 최종 구분)")
+        _hdrs1 = ["총 검사수량", "1차 불량수량", "1차 불량률", "최종 불량수량", "최종 불량률"]
+        _vals1 = [f"{summary['inspec']:,} 개",
+                  f"{summary['defect']:,} 개", f"{avg:.2f} %",
+                  f"{summary['final_defect']:,} 개", f"{avg_final:.2f} %"]
+        summary_tbl = doc.add_table(rows=2, cols=5)
+        summary_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+        for cell, h in zip(summary_tbl.rows[0].cells, _hdrs1):
+            _ct(cell, h, bold=True, sz=9, color=RGBColor(0xFF, 0xFF, 0xFF))
+            _shd(cell, C_THEAD); _bdr(cell)
+        for i, (cell, v) in enumerate(zip(summary_tbl.rows[1].cells, _vals1)):
+            _ct(cell, v, bold=True, sz=12,
+                color=(C_RED if i in (2, 4) else C_DARK))
+            _shd(cell, "F7FBFF"); _bdr(cell)
     else:
+        _sec_title(doc, "1. 전체 불량률 요약")
         _lbl_d = "1차 불량수량" if IS_1ST else "총 불량수량"
         _lbl_r = "1차 불량률"   if IS_1ST else "전체 불량률"
         summary_tbl = doc.add_table(rows=2, cols=3)
@@ -734,7 +862,9 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
 
     if MPL_OK and data["monthly"]:
         _spacer(doc)
-        if IS_DUAL:
+        if IS_ALL:
+            _img_para(doc, _chart_monthly_all(data["monthly"], avg, avg_final, avg_corr), CW_FULL)
+        elif IS_DUAL:
             _img_para(doc, _chart_monthly_dual(data["monthly"], avg, avg_final), CW_FULL)
         else:
             _img_para(doc, _chart_monthly(data["monthly"], avg), CW_FULL)
@@ -742,12 +872,12 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
     # ── 섹션2: 국가별 불량률 ─────────────────────────────────────
     _sec_title(doc, "2. 국가별 불량률")
     rows2c = []
-    if IS_DUAL:
+    if IS_ANY_DUAL:
         for d in data["by_country"]:
             d1 = d["rate"] - avg;  d2 = d.get("final_rate", 0) - avg_final
             s1 = f"▲ +{d1:.2f}%" if d1 > 0 else f"▼ {d1:.2f}%"
             s2 = f"▲ +{d2:.2f}%" if d2 > 0 else f"▼ {d2:.2f}%"
-            rows2c.append([
+            row_c = [
                 (d["name"], False, None, WD_ALIGN_PARAGRAPH.LEFT),
                 (f"{d['inspec']:,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
                 (f"{d['defect']:,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
@@ -758,15 +888,21 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
                 (f"{d.get('final_rate', 0):.2f}%", False,
                  C_RED if d.get('final_rate', 0) > avg_final else None, WD_ALIGN_PARAGRAPH.CENTER),
                 (s2, False, C_RED if d2 > 0 else C_GREEN, WD_ALIGN_PARAGRAPH.CENTER),
-                (f"{d.get('correction_rate', 0):.1f}%", False,
-                 C_GREEN if d.get('correction_rate', 0) >= 80 else None, WD_ALIGN_PARAGRAPH.CENTER),
-            ])
-        _make_table(doc,
-            ["국가명","검사수량(개)","1차불량수량","1차불량률(%)","1차평균대비",
-             "최종불량수량","최종불량률(%)","최종평균대비","수정합격률(%)"], rows2c)
+            ]
+            if IS_ALL:
+                row_c.append((f"{d.get('correction_rate', 0):.1f}%", False,
+                    C_GREEN if d.get('correction_rate', 0) >= 80 else None, WD_ALIGN_PARAGRAPH.CENTER))
+            rows2c.append(row_c)
+        _hdrs2 = ["국가명","검사수량(개)","1차불량수량","1차불량률(%)","1차평균대비",
+                  "최종불량수량","최종불량률(%)","최종평균대비"]
+        if IS_ALL: _hdrs2.append("수정합격률(%)")
+        _make_table(doc, _hdrs2, rows2c)
         if MPL_OK and data["by_country"]:
             _spacer(doc)
-            _img_para(doc, _chart_country_dual(data["by_country"], avg, avg_final), CW_HALF)
+            if IS_ALL:
+                _img_para(doc, _chart_country_all(data["by_country"], avg, avg_final, avg_corr), CW_HALF)
+            else:
+                _img_para(doc, _chart_country_dual(data["by_country"], avg, avg_final), CW_HALF)
     else:
         _lbl_d = "1차불량수량(개)" if IS_1ST else "불량수량(개)"
         _lbl_r = "1차불량률(%)"   if IS_1ST else "불량률(%)"
@@ -790,12 +926,12 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
     # ── 섹션3: 업체별 불량률 ─────────────────────────────────────
     _sec_title(doc, "3. 업체별 불량률")
     rows3 = []
-    if IS_DUAL:
+    if IS_ANY_DUAL:
         for d in data["by_client"]:
             d1 = d["rate"] - avg;  d2 = d.get("final_rate", 0) - avg_final
             s1 = f"▲ +{d1:.2f}%" if d1 > 0 else f"▼ {d1:.2f}%"
             s2 = f"▲ +{d2:.2f}%" if d2 > 0 else f"▼ {d2:.2f}%"
-            rows3.append([
+            row_c = [
                 (d["name"], False, None, WD_ALIGN_PARAGRAPH.LEFT),
                 (f"{d['inspec']:,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
                 (f"{d['defect']:,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
@@ -806,15 +942,21 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
                 (f"{d.get('final_rate', 0):.2f}%", False,
                  C_RED if d.get('final_rate', 0) > avg_final else None, WD_ALIGN_PARAGRAPH.CENTER),
                 (s2, False, C_RED if d2 > 0 else C_GREEN, WD_ALIGN_PARAGRAPH.CENTER),
-                (f"{d.get('correction_rate', 0):.1f}%", False,
-                 C_GREEN if d.get('correction_rate', 0) >= 80 else None, WD_ALIGN_PARAGRAPH.CENTER),
-            ])
-        _make_table(doc,
-            ["업체명","검사수량(개)","1차불량수량","1차불량률(%)","1차평균대비",
-             "최종불량수량","최종불량률(%)","최종평균대비","수정합격률(%)"], rows3)
+            ]
+            if IS_ALL:
+                row_c.append((f"{d.get('correction_rate', 0):.1f}%", False,
+                    C_GREEN if d.get('correction_rate', 0) >= 80 else None, WD_ALIGN_PARAGRAPH.CENTER))
+            rows3.append(row_c)
+        _hdrs3 = ["업체명","검사수량(개)","1차불량수량","1차불량률(%)","1차평균대비",
+                  "최종불량수량","최종불량률(%)","최종평균대비"]
+        if IS_ALL: _hdrs3.append("수정합격률(%)")
+        _make_table(doc, _hdrs3, rows3)
         if MPL_OK and data["by_client"]:
             _spacer(doc)
-            _img_para(doc, _chart_client_dual(data["by_client"], avg, avg_final), CW_HALF)
+            if IS_ALL:
+                _img_para(doc, _chart_client_all(data["by_client"], avg, avg_final, avg_corr), CW_HALF)
+            else:
+                _img_para(doc, _chart_client_dual(data["by_client"], avg, avg_final), CW_HALF)
     else:
         _lbl_d = "1차불량수량(개)" if IS_1ST else "불량수량(개)"
         _lbl_r = "1차불량률(%)"   if IS_1ST else "불량률(%)"
@@ -836,7 +978,7 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
             _img_para(doc, _chart_client(data["by_client"], avg), CW_HALF)
 
     # ── 섹션4~8: 1차 불량률 기준 ─────────────────────────────────
-    _sfx = "  ※ 1차 불량률 기준" if IS_DUAL else ""
+    _sfx = "  ※ 1차 불량률 기준" if IS_ANY_DUAL else ""
     _sec_title(doc, f"4. 품목 유형별 현황 (의류 / 잡화 / 신발){_sfx}")
     rows4t = []
     for d in data.get("by_item_type", []):

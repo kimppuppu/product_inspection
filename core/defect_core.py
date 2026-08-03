@@ -127,6 +127,18 @@ def parse_header(ws):
     }, 3
 
 
+# ── 지역명 정규화 ────────────────────────────────────────────────
+_REGION_MAP = {
+    'VIETNAM': '베트남', 'VIET': '베트남', 'VIET NAM': '베트남',
+    'KOREA': '한국', 'CHINA': '중국', 'MYANMAR': '미얀마',
+    'INDONESIA': '인도네시아', 'CAMBODIA': '캄보디아',
+}
+
+def _norm_region(val) -> str:
+    v = str(val or '').strip()
+    return _REGION_MAP.get(v.upper(), v)
+
+
 # ── ① 원본 시트에서 report_no 기준 조회 테이블 생성 ─────────────────
 def _build_rec_lookup(wb) -> dict:
     """① 원본 시트에서 {report_no: {최종불합격수량, 2차검사수량}} 매핑 반환"""
@@ -241,7 +253,7 @@ def load_raw(file_paths, log_fn=None):
                 'date': date_val, 'buyer': gv(row, 'buyer'),
                 'client': gv(row, 'client'), 'brand': gv(row, 'brand'),
                 'factory': str(gv(row, 'factory') or '').strip(),
-                'region1': str(gv(row, 'region1') or '').strip(),
+                'region1': _norm_region(gv(row, 'region1')),
                 'region2': str(gv(row, 'region2') or '').strip(),
                 'style': gv(row, 'style'), 'item': gv(row, 'item'),
                 'inspec': _to_int(gv(row, 'inspec')),
