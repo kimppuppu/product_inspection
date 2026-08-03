@@ -29,8 +29,9 @@ for i in range(1, 20):
 
 DETAIL_HEADERS = [
     "파일명", "REPORT NO.", "이전 보고서번호", "검사일", "바이어", "의뢰업체", "브랜드",
-    "공장", "지역1", "지역2", "스타일번호", "품명", "검사수량(INSPEC)", "원본불량명",
-    "중불량", "경불량", "불량수량"
+    "공장", "지역1", "지역2", "스타일번호", "품명", "검사수량(INSPEC)",
+    "1차불합격수량", "최종불합격수량", "2차검사수량",
+    "원본불량명", "중불량", "경불량", "불량수량"
 ]
 
 
@@ -379,7 +380,9 @@ def make_workbook(records: list[dict], output_path: str):
                 rec.get("INS. DATE_시작일"), rec.get("바이어_수정"), rec.get("의뢰업체"),
                 rec.get("브랜드"), rec.get("공장"), rec.get("지역1"), rec.get("지역2"),
                 rec.get("스타일번호"), rec.get("품명"),
-                rec.get("INSPEC. Q'TY"), d["name"], d["major"], d["minor"], d["qty"]
+                rec.get("INSPEC. Q'TY"),
+                rec.get("1차불합격수량"), rec.get("최종불합격수량"), rec.get("2차검사수량"),
+                d["name"], d["major"], d["minor"], d["qty"]
             ])
 
     summary.append(["▶ PDF 통합 요약"])

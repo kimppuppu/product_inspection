@@ -105,6 +105,7 @@ def parse_header(ws):
         '바이어': 'buyer', '의뢰업체': 'client', '브랜드': 'brand',
         '공장': 'factory', '지역1': 'region1', '지역2': 'region2',
         '스타일번호': 'style', '품명': 'item', '검사수량(INSPEC)': 'inspec',
+        '1차불합격수량': 'qty1st', '최종불합격수량': 'final_defect', '2차검사수량': 'second_inspec',
         '원본불량명': 'defect_raw', '중불량': 'qty_mid',
         '경불량': 'qty_light', '불량수량': 'qty_total',
     }
@@ -118,11 +119,55 @@ def parse_header(ws):
         if 'defect_raw' in col_map:
             return col_map, ri + 1
     return {
-        'file': 0, 'report_no': 1, 'date': 2, 'buyer': 3,
-        'client': 4, 'brand': 5, 'factory': 6, 'region1': 7,
-        'region2': 8, 'style': 9, 'item': 10, 'inspec': 11,
-        'defect_raw': 12, 'qty_mid': 13, 'qty_light': 14, 'qty_total': 15,
+        'file': 0, 'report_no': 1, 'date': 3, 'buyer': 4,
+        'client': 5, 'brand': 6, 'factory': 7, 'region1': 8,
+        'region2': 9, 'style': 10, 'item': 11, 'inspec': 12,
+        'qty1st': 13, 'final_defect': 14, 'second_inspec': 15,
+        'defect_raw': 16, 'qty_mid': 17, 'qty_light': 18, 'qty_total': 19,
     }, 3
+
+
+# ── ① 원본 시트에서 report_no 기준 조회 테이블 생성 ─────────────────
+def _build_rec_lookup(wb) -> dict:
+    """① 원본 시트에서 {report_no: {최종불합격수량, 2차검사수량}} 매핑 반환"""
+    ws_raw = None
+    for sn in wb.sheetnames:
+        if '원본' in sn:
+            ws_raw = wb[sn]
+            break
+    if ws_raw is None:
+        return {}
+
+    # 헤더 행 탐색 (REPORT NO. 포함 행)
+    header = None
+    header_ri = -1
+    for ri, row in enumerate(ws_raw.iter_rows(min_row=1, max_row=10, values_only=True), 1):
+        if row and any(str(v).strip() == 'REPORT NO.' for v in row if v):
+            header = [str(v).strip() if v else '' for v in row]
+            header_ri = ri
+            break
+    if header is None:
+        return {}
+
+    try:
+        ci_rno   = header.index('REPORT NO.')
+        ci_final = header.index('최종불합격수량')
+        ci_sec   = header.index('2차검사수량')
+    except ValueError:
+        return {}
+
+    lookup = {}
+    for row in ws_raw.iter_rows(min_row=header_ri + 1, values_only=True):
+        if not row:
+            continue
+        rno = row[ci_rno] if len(row) > ci_rno else None
+        if not rno:
+            continue
+        lookup[str(rno).strip()] = {
+            '최종불합격수량': _to_int(row[ci_final] if len(row) > ci_final else None),
+            '2차검사수량':    _to_int(row[ci_sec]   if len(row) > ci_sec   else None),
+        }
+    return lookup
 
 
 # ── 데이터 파일 로드 ──────────────────────────────────────────────
@@ -143,6 +188,9 @@ def load_raw(file_paths, log_fn=None):
         except Exception as e:
             skipped.append(fn + f"  ← 읽기 오류: {e}")
             continue
+
+        # ① 원본 시트에서 report_no 기준 최종불합격수량·2차검사수량 미리 로드
+        rec_lookup = _build_rec_lookup(wb)
 
         snames = wb.sheetnames
         ws = None
@@ -181,6 +229,13 @@ def load_raw(file_paths, log_fn=None):
             elif date_val:
                 date_val = str(date_val)
 
+            # ① 원본에서 report_no 기준으로 최종불합격수량·2차검사수량 조회
+            # (없으면 ② 불량상세 컬럼 값 사용 → 둘 다 없으면 0)
+            rno_str = str(gv(row, 'report_no') or '').strip()
+            rec_data = rec_lookup.get(rno_str, {})
+            final_defect  = rec_data.get('최종불합격수량') if rec_data else _to_int(gv(row, 'final_defect'))
+            second_inspec = rec_data.get('2차검사수량')    if rec_data else _to_int(gv(row, 'second_inspec'))
+
             rows.append({
                 'file': fn, 'report_no': gv(row, 'report_no'),
                 'date': date_val, 'buyer': gv(row, 'buyer'),
@@ -194,6 +249,8 @@ def load_raw(file_paths, log_fn=None):
                 'qty_mid': _to_int(gv(row, 'qty_mid')),
                 'qty_light': _to_int(gv(row, 'qty_light')),
                 'qty_total': _to_int(gv(row, 'qty_total')),
+                '최종불합격수량': final_defect  or 0,
+                '2차검사수량':    second_inspec or 0,
             })
             rows[-1]['region_label'] = get_region_label(rows[-1])
             cnt += 1
