@@ -1,6 +1,7 @@
 """
 app.py — 제품평가팀 불량률·실적 분석 웹앱 (Streamlit, FITI UI)
 실행: streamlit run app.py
+# updated: 2026-08-03
 """
 import sys
 import shutil
