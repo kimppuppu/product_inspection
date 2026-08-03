@@ -31,7 +31,12 @@ try:
     )
     from core.ai_comment import get_comment
     from core.pdf_report import generate_factory_pdf
-    from core.word_report import generate_word_report, generate_factory_word
+    from core.word_report import generate_word_report
+    try:
+        from core.word_report import generate_factory_word as _gfw
+        generate_factory_word = _gfw
+    except ImportError:
+        generate_factory_word = None
 
     _IMPORT_ERROR = None
 except Exception as _e:
@@ -981,8 +986,8 @@ def render_factory_tab():
                     top5_df.index = top5_df.index + 1
                     st.dataframe(top5_df, use_container_width=True)
 
-                _dl_col1, _dl_col2 = st.columns(2)
-                with _dl_col1:
+                _dl_cols = st.columns(2) if generate_factory_word else [st.container()]
+                with _dl_cols[0]:
                     pdf_bytes = generate_factory_pdf(detail)
                     st.download_button(
                         "⬇️ PDF 보고서 다운로드",
@@ -991,15 +996,16 @@ def render_factory_tab():
                         mime="application/pdf",
                         key="dl_factory_pdf",
                     )
-                with _dl_col2:
-                    word_bytes = generate_factory_word(detail)
-                    st.download_button(
-                        "⬇️ Word 보고서 다운로드",
-                        data=word_bytes,
-                        file_name=f"{selected_factory}_분석보고서.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        key="dl_factory_word",
-                    )
+                if generate_factory_word and len(_dl_cols) > 1:
+                    with _dl_cols[1]:
+                        word_bytes = generate_factory_word(detail)
+                        st.download_button(
+                            "⬇️ Word 보고서 다운로드",
+                            data=word_bytes,
+                            file_name=f"{selected_factory}_분석보고서.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            key="dl_factory_word",
+                        )
             else:
                 st.info("해당 공장의 데이터가 없습니다.")
 
