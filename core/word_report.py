@@ -660,7 +660,7 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
     period  = data["period"]
     summary = data["summary"]
     avg     = summary["rate"]
-    IS_DUAL = (report_mode == '1차 불량률 + 최종 불량률')
+    IS_DUAL = report_mode in ('전체', '1차 불량률 + 최종 불량률')
     IS_1ST  = (report_mode == '1차 불량률')
     avg_final = summary.get("final_rate", 0.0)
     avg_corr  = summary.get("correction", 0.0)
