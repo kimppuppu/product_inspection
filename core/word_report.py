@@ -1063,3 +1063,146 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
     doc.save(buf)
     buf.seek(0)
     return buf.getvalue()
+
+
+# ── 공장별 Word 보고서 ────────────────────────────────────────────
+
+def generate_factory_word(detail: dict) -> bytes:
+    """
+    calc_factory_detail() 결과(detail dict)를 받아 공장별 .docx 반환
+    """
+    if not DOCX_OK:
+        raise RuntimeError("python-docx 설치 필요")
+
+    factory = detail.get('factory', '공장')
+    region1 = detail.get('region1', '')
+    region2 = detail.get('region2', '')
+    buyers  = detail.get('buyers', [])
+    period_list = [m['month'] for m in detail.get('monthly', []) if m.get('month')]
+    period  = f"{min(period_list)} ~ {max(period_list)}" if period_list else '-'
+
+    total_inspec  = detail.get('total_inspec', 0)
+    total_defect  = detail.get('total_defect', 0)
+    total_final   = detail.get('total_final_defect', 0)
+    total_second  = detail.get('total_second_inspec', 0)
+    avg_rate      = detail.get('avg_rate') or 0.0
+    final_rate    = detail.get('final_rate') or 0.0
+    corr_rate     = detail.get('correction_rate') or 0.0
+    has_dual      = (total_final > 0 or total_second > 0)
+
+    doc = Document()
+    for sec in doc.sections:
+        sec.page_width    = Cm(21);   sec.page_height   = Cm(29.7)
+        sec.left_margin   = Cm(2.5);  sec.right_margin  = Cm(2.5)
+        sec.top_margin    = Cm(2.5);  sec.bottom_margin = Cm(2.0)
+
+    # 제목
+    p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_after = Pt(0)
+    _run(p, f"공장별 불량률 분석 보고서", sz=20, bold=True, color=C_HEADER)
+    p2 = doc.add_paragraph(); p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p2.paragraph_format.space_before = Pt(2); p2.paragraph_format.space_after = Pt(2)
+    _run(p2, f"{factory}  |  {region1} {region2}".strip(), sz=13, color=C_SUB)
+    p3 = doc.add_paragraph(); p3.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p3.paragraph_format.space_after = Pt(4)
+    _run(p3, f"검사 기간 : {period}", sz=10, color=C_SUB)
+    _hr(doc)
+
+    # ── 1. KPI 요약 ───────────────────────────────────────────────
+    _sec_title(doc, "1. 핵심 지표 요약")
+    if has_dual:
+        _hdrs = ["총 검사수량", "1차 불량수량", "1차 불량률", "최종 불량수량", "최종 불량률", "수정 합격률"]
+        _vals = [
+            f"{total_inspec:,} 개",
+            f"{total_defect:,} 개",   f"{avg_rate:.2f} %",
+            f"{total_final:,} 개",    f"{final_rate:.2f} %",
+            f"{corr_rate:.1f} %",
+        ]
+        kpi_tbl = doc.add_table(rows=2, cols=6)
+        kpi_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+        for cell, h in zip(kpi_tbl.rows[0].cells, _hdrs):
+            _ct(cell, h, bold=True, sz=8.5, color=RGBColor(0xFF, 0xFF, 0xFF))
+            _shd(cell, C_THEAD); _bdr(cell)
+        for i, (cell, v) in enumerate(zip(kpi_tbl.rows[1].cells, _vals)):
+            _ct(cell, v, bold=True, sz=12,
+                color=(C_RED if i in (2, 4) else (C_GREEN if i == 5 else C_DARK)))
+            _shd(cell, "F7FBFF"); _bdr(cell)
+    else:
+        _hdrs = ["총 검사수량", "불량수량", "불량률", "검사 건수"]
+        _vals = [f"{total_inspec:,} 개", f"{total_defect:,} 개",
+                 f"{avg_rate:.2f} %", f"{detail.get('record_count', 0):,} 건"]
+        kpi_tbl = doc.add_table(rows=2, cols=4)
+        kpi_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+        for cell, h in zip(kpi_tbl.rows[0].cells, _hdrs):
+            _ct(cell, h, bold=True, sz=9, color=RGBColor(0xFF, 0xFF, 0xFF))
+            _shd(cell, C_THEAD); _bdr(cell)
+        for i, (cell, v) in enumerate(zip(kpi_tbl.rows[1].cells, _vals)):
+            _ct(cell, v, bold=True, sz=13, color=(C_RED if i == 2 else C_DARK))
+            _shd(cell, "F7FBFF"); _bdr(cell)
+
+    # ── 2. 월별 추이 차트 ─────────────────────────────────────────
+    monthly = detail.get('monthly', [])
+    if MPL_OK and monthly:
+        _spacer(doc)
+        _sec_title(doc, "2. 월별 불량률 추이")
+        if has_dual:
+            avg2 = final_rate
+            img = _chart_monthly_all(monthly, avg_rate, avg2, corr_rate) if corr_rate else \
+                  _chart_monthly_dual(monthly, avg_rate, avg2)
+        else:
+            img = _chart_monthly(monthly, avg_rate)
+        _img_para(doc, img, 15)
+
+    # ── 3. 주요 불량 유형 TOP7 ────────────────────────────────────
+    top5 = detail.get('top5_defects', [])
+    if top5:
+        _sec_title(doc, f"3. 주요 불량 유형 (TOP {len(top5)})")
+        total_qty = sum(d['qty'] for d in top5) or 1
+        rows_top = []
+        cum = 0
+        for i, d in enumerate(top5):
+            cum += d['pct']
+            rows_top.append([
+                (f"#{i+1}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (d['name'], False, None, WD_ALIGN_PARAGRAPH.LEFT),
+                (f"{d['qty']:,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{d['pct']:.1f}%", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{cum:.1f}%", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+            ])
+        _make_table(doc, ["순위", "불량 유형", "건수", "비율(%)", "누적(%)"], rows_top)
+
+        # 불량 유형 바차트
+        if MPL_OK:
+            _spacer(doc)
+            names  = [f"#{i+1} {d['name']}" for i, d in enumerate(top5)]
+            qtys   = [d['qty'] for d in top5]
+            pal    = PALETTE[:len(qtys)]
+            fig, ax = plt.subplots(figsize=(9, 3.5))
+            bars = ax.barh(names[::-1], qtys[::-1], color=pal[::-1], height=0.55)
+            for b, q in zip(bars, qtys[::-1]):
+                ax.text(b.get_width() + max(qtys)*0.01, b.get_y() + b.get_height()/2,
+                        str(q), va='center', fontsize=8)
+            ax.set_xlabel('건수', fontsize=9)
+            ax.set_title(f'{factory} 불량 유형별 건수', fontsize=11, fontweight='bold')
+            ax.grid(axis='x', alpha=0.3)
+            ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+            fig.tight_layout()
+            _img_para(doc, _fig_bytes(fig), 15)
+
+    # ── 4. 바이어 목록 ────────────────────────────────────────────
+    if buyers:
+        _sec_title(doc, "4. 주요 바이어")
+        p_b = doc.add_paragraph()
+        p_b.paragraph_format.space_before = Pt(2)
+        _run(p_b, "  /  ".join(buyers), sz=10)
+
+    # 생성일
+    p_f = doc.add_paragraph(); p_f.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    p_f.paragraph_format.space_before = Pt(12)
+    _run(p_f, f"보고서 생성일 : {datetime.now().strftime('%Y-%m-%d')}",
+         sz=8.5, color=RGBColor(0x88, 0x88, 0x88))
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
