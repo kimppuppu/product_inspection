@@ -1065,142 +1065,252 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
     return buf.getvalue()
 
 
-# ── 공장별 Word 보고서 ────────────────────────────────────────────
+# ── 공장별 Word 보고서 (PDF와 동일 구조) ─────────────────────────
+
+def _fw_chart_trend(monthly, factory, has_dual):
+    """PDF와 동일한 스타일의 월별 추이 차트 반환 (BytesIO)"""
+    if not MPL_OK or not monthly:
+        return None
+    months = [m["month"] for m in monthly if m.get("month")]
+    rates1 = [m.get("rate") or 0 for m in monthly]
+    if not months:
+        return None
+
+    if has_dual:
+        rates2 = [m.get("final_rate") or 0 for m in monthly]
+        corr   = [m.get("correction_rate") or 0 for m in monthly]
+        has_final = any(r > 0 for r in rates2)
+
+        if has_final:
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9, 5.5), sharex=True,
+                                            gridspec_kw={'height_ratios': [3, 2]})
+        else:
+            fig, ax1 = plt.subplots(figsize=(9, 3.5))
+            ax2 = None
+
+        ax1.plot(months, rates1, marker='o', lw=2.5, color='#2B5BA8',
+                 label='1차 불량률', ms=6, markerfacecolor='white', markeredgewidth=2)
+        if has_final:
+            ax1.plot(months, rates2, marker='s', lw=2.5, color='#C0392B',
+                     label='최종 불량률', ms=6, markerfacecolor='white', markeredgewidth=2)
+        ax1.set_title(f"{factory} — 월별 불량률 추이 (1차 vs 최종)", fontsize=12, pad=10)
+        ax1.set_ylabel("불량률 (%)"); ax1.set_ylim(bottom=0)
+        ax1.legend(fontsize=9, loc='upper right')
+        ax1.grid(axis='y', linestyle='--', alpha=0.4)
+
+        if ax2 is not None and any(c > 0 for c in corr):
+            _colors = ['#27AE60' if c >= 80 else ('#E67E22' if c >= 60 else '#C0392B') for c in corr]
+            ax2.bar(months, corr, color=_colors, width=0.5, alpha=0.85)
+            for i, (m, c) in enumerate(zip(months, corr)):
+                if c > 0:
+                    ax2.text(i, c + 1, f'{c:.0f}%', ha='center', va='bottom', fontsize=8)
+            ax2.set_ylim(0, 110); ax2.set_ylabel("수정합격률 (%)")
+            ax2.set_title("수정 합격률 추이", fontsize=10, pad=6)
+            ax2.grid(axis='y', linestyle='--', alpha=0.3)
+            ax2.axhline(80, color='#27AE60', lw=1, linestyle=':', alpha=0.7)
+    else:
+        fig, ax1 = plt.subplots(figsize=(9, 3.5))
+        if len(months) == 1:
+            ax1.bar(months, rates1, color='#2B5BA8', width=0.4)
+        else:
+            ax1.plot(months, rates1, marker='o', lw=2.5, color='#2B5BA8',
+                     ms=6, markerfacecolor='white', markeredgewidth=2)
+            ax1.fill_between(months, rates1, alpha=0.08, color='#2B5BA8')
+        ax1.set_title(f"{factory} — 월별 1차 불량률 추이", fontsize=13, pad=12)
+        ax1.set_ylabel("불량률 (%)"); ax1.set_ylim(bottom=0)
+        ax1.grid(axis='y', linestyle='--', alpha=0.4)
+
+    plt.xticks(rotation=30, ha='right', fontsize=9)
+    fig.tight_layout()
+    return _fig_bytes(fig)
+
+
+def _fw_chart_defect(top5, factory):
+    """PDF와 동일한 스타일의 불량 유형 바차트"""
+    if not MPL_OK or not top5:
+        return None
+    names = [d["name"] for d in reversed(top5)]
+    qtys  = [d["qty"]  for d in reversed(top5)]
+    bar_colors = ['#2B5BA8','#4472C4','#5B9BD5','#70AD47','#ED7D31',
+                  '#8E44AD','#16A085'][::-1]
+    fig, ax = plt.subplots(figsize=(9, 3))
+    bars = ax.barh(names, qtys, color=bar_colors[:len(names)], edgecolor='white')
+    for bar, qty in zip(bars, qtys):
+        ax.text(bar.get_width() + max(qtys)*0.01, bar.get_y() + bar.get_height()/2,
+                f'{qty:,}개', va='center', fontsize=9)
+    ax.set_title(f"주요 불량 유형 TOP {len(top5)}", fontsize=13, pad=12)
+    ax.set_xlabel("불량 수량 (개)")
+    ax.grid(axis='x', linestyle='--', alpha=0.3)
+    ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    fig.tight_layout()
+    return _fig_bytes(fig)
+
 
 def generate_factory_word(detail: dict) -> bytes:
     """
-    calc_factory_detail() 결과(detail dict)를 받아 공장별 .docx 반환
+    PDF와 동일한 구조의 공장별 .docx 반환
+    기본정보 → KPI → 월별추이 → TOP5불량유형 → 월별검사실적
     """
     if not DOCX_OK:
         raise RuntimeError("python-docx 설치 필요")
 
-    factory = detail.get('factory', '공장')
-    region1 = detail.get('region1', '')
-    region2 = detail.get('region2', '')
-    buyers  = detail.get('buyers', [])
-    period_list = [m['month'] for m in detail.get('monthly', []) if m.get('month')]
-    period  = f"{min(period_list)} ~ {max(period_list)}" if period_list else '-'
-
-    total_inspec  = detail.get('total_inspec', 0)
-    total_defect  = detail.get('total_defect', 0)
-    total_final   = detail.get('total_final_defect', 0)
-    total_second  = detail.get('total_second_inspec', 0)
-    avg_rate      = detail.get('avg_rate') or 0.0
-    final_rate    = detail.get('final_rate') or 0.0
-    corr_rate     = detail.get('correction_rate') or 0.0
-    has_dual      = (total_final > 0 or total_second > 0)
+    factory      = detail.get('factory', '공장')
+    region1      = detail.get('region1', '')
+    region2      = detail.get('region2', '')
+    buyers       = ", ".join(detail.get('buyers', [])) or "—"
+    record_count = detail.get('record_count', 0)
+    total_inspec = detail.get('total_inspec', 0)
+    total_defect = detail.get('total_defect', 0)
+    total_final  = detail.get('total_final_defect', 0)
+    total_second = detail.get('total_second_inspec', 0)
+    avg_rate     = detail.get('avg_rate') or 0.0
+    final_rate   = detail.get('final_rate') or 0.0
+    corr_rate    = detail.get('correction_rate') or 0.0
+    has_dual     = (total_final > 0 or total_second > 0)
+    monthly      = detail.get('monthly', [])
+    top5         = detail.get('top7_defects', [])
+    today        = datetime.now().strftime('%Y년 %m월 %d일')
 
     doc = Document()
     for sec in doc.sections:
         sec.page_width    = Cm(21);   sec.page_height   = Cm(29.7)
-        sec.left_margin   = Cm(2.5);  sec.right_margin  = Cm(2.5)
-        sec.top_margin    = Cm(2.5);  sec.bottom_margin = Cm(2.0)
+        sec.left_margin   = Cm(2.0);  sec.right_margin  = Cm(2.0)
+        sec.top_margin    = Cm(2.0);  sec.bottom_margin = Cm(2.0)
 
-    # 제목
+    # ── 헤더 ─────────────────────────────────────────────────────
+    _hr(doc)
     p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.paragraph_format.space_after = Pt(0)
-    _run(p, f"공장별 불량률 분석 보고서", sz=20, bold=True, color=C_HEADER)
+    p.paragraph_format.space_before = Pt(4); p.paragraph_format.space_after = Pt(2)
+    _run(p, "공장 불량률 분석 보고서", sz=22, bold=True, color=C_HEADER)
     p2 = doc.add_paragraph(); p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p2.paragraph_format.space_before = Pt(2); p2.paragraph_format.space_after = Pt(2)
-    _run(p2, f"{factory}  |  {region1} {region2}".strip(), sz=13, color=C_SUB)
+    p2.paragraph_format.space_before = Pt(0); p2.paragraph_format.space_after = Pt(2)
+    _run(p2, factory, sz=16, bold=True, color=C_SUB)
     p3 = doc.add_paragraph(); p3.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p3.paragraph_format.space_after = Pt(4)
-    _run(p3, f"검사 기간 : {period}", sz=10, color=C_SUB)
+    p3.paragraph_format.space_before = Pt(0); p3.paragraph_format.space_after = Pt(6)
+    _run(p3, f"보고일: {today}", sz=10, color=RGBColor(0x6C,0x75,0x7D))
     _hr(doc)
 
-    # ── 1. KPI 요약 ───────────────────────────────────────────────
-    _sec_title(doc, "1. 핵심 지표 요약")
+    # ── 기본 정보 ─────────────────────────────────────────────────
+    _sec_title(doc, "기본 정보")
+    info_tbl = doc.add_table(rows=2, cols=4)
+    info_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+    info_data = [
+        ["지역", f"{region1} {region2}".strip(), "바이어", buyers],
+        ["검사 건수", f"{record_count:,}건", "총 검사수량", f"{total_inspec:,}개"],
+    ]
+    for ri, row_data in enumerate(info_data):
+        for ci, val in enumerate(row_data):
+            cell = info_tbl.rows[ri].cells[ci]
+            is_label = (ci % 2 == 0)
+            _ct(cell, val, bold=is_label, sz=9.5,
+                color=C_SUB if is_label else C_DARK,
+                align=WD_ALIGN_PARAGRAPH.LEFT)
+            _shd(cell, "E8F0FE" if is_label else "FFFFFF")
+            _bdr(cell)
+
+    _spacer(doc)
+
+    # ── KPI 카드 ─────────────────────────────────────────────────
+    def _rate_color(r, is_corr=False):
+        if is_corr:
+            return C_GREEN if r >= 80 else (RGBColor(0xE6,0x7E,0x22) if r >= 60 else C_RED)
+        return C_GREEN if r < 1.5 else (RGBColor(0xE6,0x7E,0x22) if r < 3 else C_RED)
+
     if has_dual:
-        _hdrs = ["총 검사수량", "1차 불량수량", "1차 불량률", "최종 불량수량", "최종 불량률", "수정 합격률"]
-        _vals = [
-            f"{total_inspec:,} 개",
-            f"{total_defect:,} 개",   f"{avg_rate:.2f} %",
-            f"{total_final:,} 개",    f"{final_rate:.2f} %",
-            f"{corr_rate:.1f} %",
-        ]
-        kpi_tbl = doc.add_table(rows=2, cols=6)
-        kpi_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-        for cell, h in zip(kpi_tbl.rows[0].cells, _hdrs):
-            _ct(cell, h, bold=True, sz=8.5, color=RGBColor(0xFF, 0xFF, 0xFF))
-            _shd(cell, C_THEAD); _bdr(cell)
-        for i, (cell, v) in enumerate(zip(kpi_tbl.rows[1].cells, _vals)):
-            _ct(cell, v, bold=True, sz=12,
-                color=(C_RED if i in (2, 4) else (C_GREEN if i == 5 else C_DARK)))
-            _shd(cell, "F7FBFF"); _bdr(cell)
+        kpi_hdrs = ["1차 불량률", "최종 불량률", "수정 합격률", "1차 불량수량", "분석 기간"]
+        kpi_vals = [f"{avg_rate:.2f}%", f"{final_rate:.2f}%", f"{corr_rate:.1f}%",
+                    f"{total_defect:,}개", f"{len(monthly)}개월"]
+        kpi_colors = [_rate_color(avg_rate), _rate_color(final_rate),
+                      _rate_color(corr_rate, True), C_HEADER, RGBColor(0x6C,0x75,0x7D)]
+        kpi_tbl = doc.add_table(rows=2, cols=5)
     else:
-        _hdrs = ["총 검사수량", "불량수량", "불량률", "검사 건수"]
-        _vals = [f"{total_inspec:,} 개", f"{total_defect:,} 개",
-                 f"{avg_rate:.2f} %", f"{detail.get('record_count', 0):,} 건"]
-        kpi_tbl = doc.add_table(rows=2, cols=4)
-        kpi_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-        for cell, h in zip(kpi_tbl.rows[0].cells, _hdrs):
-            _ct(cell, h, bold=True, sz=9, color=RGBColor(0xFF, 0xFF, 0xFF))
-            _shd(cell, C_THEAD); _bdr(cell)
-        for i, (cell, v) in enumerate(zip(kpi_tbl.rows[1].cells, _vals)):
-            _ct(cell, v, bold=True, sz=13, color=(C_RED if i == 2 else C_DARK))
-            _shd(cell, "F7FBFF"); _bdr(cell)
+        kpi_hdrs = ["평균 불량률", "총 불량수량", "분석 기간"]
+        kpi_vals = [f"{avg_rate:.2f}%", f"{total_defect:,}개", f"{len(monthly)}개월"]
+        kpi_colors = [_rate_color(avg_rate), C_HEADER, RGBColor(0x6C,0x75,0x7D)]
+        kpi_tbl = doc.add_table(rows=2, cols=3)
 
-    # ── 2. 월별 추이 차트 ─────────────────────────────────────────
-    monthly = detail.get('monthly', [])
+    kpi_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+    for cell, h in zip(kpi_tbl.rows[0].cells, kpi_hdrs):
+        _ct(cell, h, bold=True, sz=8.5, color=RGBColor(0xFF,0xFF,0xFF))
+        _shd(cell, C_THEAD); _bdr(cell)
+    for cell, v, col in zip(kpi_tbl.rows[1].cells, kpi_vals, kpi_colors):
+        _ct(cell, v, bold=True, sz=14, color=col)
+        _shd(cell, "E8F0FE"); _bdr(cell)
+
+    _spacer(doc)
+
+    # ── 월별 불량률 추이 ──────────────────────────────────────────
+    _sec_title(doc, "월별 불량률 추이")
     if MPL_OK and monthly:
-        _spacer(doc)
-        _sec_title(doc, "2. 월별 불량률 추이")
-        if has_dual:
-            avg2 = final_rate
-            img = _chart_monthly_all(monthly, avg_rate, avg2, corr_rate) if corr_rate else \
-                  _chart_monthly_dual(monthly, avg_rate, avg2)
-        else:
-            img = _chart_monthly(monthly, avg_rate)
-        _img_para(doc, img, 15)
+        trend_img = _fw_chart_trend(monthly, factory, has_dual)
+        if trend_img:
+            _img_para(doc, trend_img, 15)
+    _spacer(doc)
 
-    # ── 3. 주요 불량 유형 TOP7 ────────────────────────────────────
-    top5 = detail.get('top5_defects', [])
+    # ── 주요 불량 유형 ────────────────────────────────────────────
     if top5:
-        _sec_title(doc, f"3. 주요 불량 유형 (TOP {len(top5)})")
-        total_qty = sum(d['qty'] for d in top5) or 1
-        rows_top = []
-        cum = 0
+        _sec_title(doc, f"주요 불량 유형 TOP {len(top5)}")
+        defect_img = _fw_chart_defect(top5, factory)
+        if defect_img:
+            _img_para(doc, defect_img, 15)
+        _spacer(doc)
+        d_rows = []
         for i, d in enumerate(top5):
-            cum += d['pct']
-            rows_top.append([
-                (f"#{i+1}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
-                (d['name'], False, None, WD_ALIGN_PARAGRAPH.LEFT),
-                (f"{d['qty']:,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
-                (f"{d['pct']:.1f}%", False, None, WD_ALIGN_PARAGRAPH.CENTER),
-                (f"{cum:.1f}%", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+            d_rows.append([
+                (f"{i+1}위", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (d["name"], False, None, WD_ALIGN_PARAGRAPH.LEFT),
+                (f"{d['qty']:,}개", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{d['pct']}%", False, None, WD_ALIGN_PARAGRAPH.CENTER),
             ])
-        _make_table(doc, ["순위", "불량 유형", "건수", "비율(%)", "누적(%)"], rows_top)
+        _make_table(doc, ["순위", "표준 불량명", "불량 수량", "비율"], d_rows)
+        _spacer(doc)
 
-        # 불량 유형 바차트
-        if MPL_OK:
-            _spacer(doc)
-            names  = [f"#{i+1} {d['name']}" for i, d in enumerate(top5)]
-            qtys   = [d['qty'] for d in top5]
-            pal    = PALETTE[:len(qtys)]
-            fig, ax = plt.subplots(figsize=(9, 3.5))
-            bars = ax.barh(names[::-1], qtys[::-1], color=pal[::-1], height=0.55)
-            for b, q in zip(bars, qtys[::-1]):
-                ax.text(b.get_width() + max(qtys)*0.01, b.get_y() + b.get_height()/2,
-                        str(q), va='center', fontsize=8)
-            ax.set_xlabel('건수', fontsize=9)
-            ax.set_title(f'{factory} 불량 유형별 건수', fontsize=11, fontweight='bold')
-            ax.grid(axis='x', alpha=0.3)
-            ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
-            fig.tight_layout()
-            _img_para(doc, _fig_bytes(fig), 15)
+    # ── 월별 검사 실적 ────────────────────────────────────────────
+    _sec_title(doc, "월별 검사 실적")
+    if has_dual:
+        m_rows = []
+        for m in monthly:
+            r1 = m.get("rate"); r2 = m.get("final_rate"); rc = m.get("correction_rate")
+            m_rows.append([
+                (m["month"], False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{m.get('inspec',0):,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{m.get('defect',0):,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{r1:.2f}%" if r1 is not None else "—", False,
+                 _rate_color(r1) if r1 is not None else None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{m.get('final_defect',0):,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{r2:.2f}%" if r2 is not None else "—", False,
+                 _rate_color(r2) if r2 is not None else None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{rc:.1f}%" if rc is not None else "—", False,
+                 _rate_color(rc, True) if rc is not None else None, WD_ALIGN_PARAGRAPH.CENTER),
+            ])
+        _make_table(doc,
+            ["연월","검사수량","1차불량수량","1차불량률","최종불량수량","최종불량률","수정합격률"],
+            m_rows)
+    else:
+        m_rows = []
+        for m in monthly:
+            rate = m.get("rate")
+            if rate is None:
+                rate_str, eval_str = "—", "—"
+            else:
+                rate_str = f"{rate:.2f}%"
+                eval_str = "우수" if rate < 1.0 else ("양호" if rate < 2.0 else ("주의" if rate < 3.5 else "불량"))
+            m_rows.append([
+                (m["month"], False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{m.get('inspec',0):,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{m.get('defect',0):,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (rate_str, False, _rate_color(rate) if rate is not None else None, WD_ALIGN_PARAGRAPH.CENTER),
+                (eval_str, False, None, WD_ALIGN_PARAGRAPH.CENTER),
+            ])
+        _make_table(doc, ["연월","검사수량","불량수량","불량률","평가"], m_rows)
 
-    # ── 4. 바이어 목록 ────────────────────────────────────────────
-    if buyers:
-        _sec_title(doc, "4. 주요 바이어")
-        p_b = doc.add_paragraph()
-        p_b.paragraph_format.space_before = Pt(2)
-        _run(p_b, "  /  ".join(buyers), sz=10)
-
-    # 생성일
-    p_f = doc.add_paragraph(); p_f.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    p_f.paragraph_format.space_before = Pt(12)
-    _run(p_f, f"보고서 생성일 : {datetime.now().strftime('%Y-%m-%d')}",
-         sz=8.5, color=RGBColor(0x88, 0x88, 0x88))
+    # ── 푸터 ─────────────────────────────────────────────────────
+    _hr(doc)
+    p_f = doc.add_paragraph(); p_f.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_f.paragraph_format.space_before = Pt(4)
+    _run(p_f,
+         f"본 보고서는 FITI 제품평가팀 검사 데이터 기반으로 자동 생성되었습니다.  |  {today}",
+         sz=8, color=RGBColor(0x6C,0x75,0x7D))
 
     buf = io.BytesIO()
     doc.save(buf)

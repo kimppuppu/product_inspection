@@ -194,7 +194,7 @@ def _make_defect_chart(top5, font_name):
     for bar, qty in zip(bars, qtys):
         ax.text(bar.get_width() + max(qtys)*0.01, bar.get_y() + bar.get_height()/2,
                 f'{qty:,}개', va='center', fontsize=9)
-    ax.set_title("주요 불량 유형 TOP 5", fontsize=13, pad=12)
+    ax.set_title(f"주요 불량 유형 TOP {len(top5)}", fontsize=13, pad=12)
     ax.set_xlabel("불량 수량 (개)")
     ax.grid(axis='x', linestyle='--', alpha=0.3)
     plt.tight_layout()
@@ -254,7 +254,7 @@ def generate_factory_pdf(detail: dict) -> bytes:
     corr_rate     = detail.get("correction_rate") or 0
     has_dual      = total_final > 0 or total_second > 0
     monthly       = detail.get("monthly", [])
-    top5          = detail.get("top5_defects", [])
+    top7          = detail.get("top7_defects", [])
     today         = datetime.now().strftime("%Y년 %m월 %d일")
 
     story = []
@@ -359,9 +359,9 @@ def generate_factory_pdf(detail: dict) -> bytes:
     story.append(Spacer(1, 12))
 
     # 불량 TOP5
-    if top5:
-        story.append(Paragraph("■ 주요 불량 유형 TOP 5", s_section))
-        defect_png = _make_defect_chart(top5, mpl_font)
+    if top7:
+        story.append(Paragraph(f"■ 주요 불량 유형 TOP {len(top7)}", s_section))
+        defect_png = _make_defect_chart(top7, mpl_font)
         if defect_png:
             story.append(Image(io.BytesIO(defect_png), width=16*cm, height=5.5*cm))
         d_rows = [[
@@ -374,7 +374,7 @@ def generate_factory_pdf(detail: dict) -> bytes:
              Paragraph(d["name"], s_cell),
              Paragraph(f"{d['qty']:,}개", s_cell_r),
              Paragraph(f"{d['pct']}%", s_cell_c)]
-            for i, d in enumerate(top5)
+            for i, d in enumerate(top7)
         ]
         d_tbl = Table(d_rows, colWidths=[2*cm, 9*cm, 3*cm, 2.5*cm])
         d_tbl.setStyle(TableStyle([

@@ -228,7 +228,7 @@ def calc_factory_detail(raw_rows: list[dict], cache: dict,
         for (part, std, sc, meth, rev, note) in cache.get(r['defect_raw'], []):
             if std:
                 std_count[std] += r.get('qty_total', 0) or 0
-    top5 = sorted(std_count.items(), key=lambda x: -x[1])[:7]
+    top7 = sorted(std_count.items(), key=lambda x: -x[1])[:7]
     total_defect_sum = sum(std_count.values()) or 1
 
     # 바이어 목록
@@ -254,9 +254,9 @@ def calc_factory_detail(raw_rows: list[dict], cache: dict,
         'correction_rate':    (_safe_rate(_total_second - _total_final, _total_second)
                                if _total_second else None),
         'monthly':            monthly_list,
-        'top5_defects': [
+        'top7_defects': [
             {'name': name, 'qty': qty, 'pct': round(qty / total_defect_sum * 100, 1)}
-            for name, qty in top5
+            for name, qty in top7
         ],
     }
 
