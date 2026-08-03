@@ -168,6 +168,12 @@ def _build_rec_lookup(wb) -> dict:
     except ValueError:
         return {}
 
+    # 1차불합격수량: 없어도 동작하도록 try
+    try:
+        ci_1st = header.index('1차불합격수량')
+    except ValueError:
+        ci_1st = None
+
     lookup = {}
     for row in ws_raw.iter_rows(min_row=header_ri + 1, values_only=True):
         if not row:
@@ -175,9 +181,19 @@ def _build_rec_lookup(wb) -> dict:
         rno = row[ci_rno] if len(row) > ci_rno else None
         if not rno:
             continue
+
+        final  = _to_int(row[ci_final] if len(row) > ci_final else None)
+        second = _to_int(row[ci_sec]   if len(row) > ci_sec   else None)
+        first  = _to_int(row[ci_1st]   if ci_1st is not None and len(row) > ci_1st else None)
+
+        # 2차검사수량이 없으면 1차불합격수량으로 대체
+        # (재검사 대상 = 1차 불합격품이므로 사실상 동일)
+        if not second and first:
+            second = first
+
         lookup[str(rno).strip()] = {
-            '최종불합격수량': _to_int(row[ci_final] if len(row) > ci_final else None),
-            '2차검사수량':    _to_int(row[ci_sec]   if len(row) > ci_sec   else None),
+            '최종불합격수량': final,
+            '2차검사수량':    second,
         }
     return lookup
 
@@ -286,6 +302,10 @@ def get_region_label(row: dict) -> str:
     r1     = str(row.get('region1') or '').strip()
     r2     = str(row.get('region2') or '').strip()
 
+    r1l = r1.lower()
+    r2l = r2.lower()
+
+    # ① 접수번호 앞글자 우선 판별
     if prefix == 'S':
         return '중국 상해'
     elif prefix == 'Q':
@@ -295,17 +315,45 @@ def get_region_label(row: dict) -> str:
     elif prefix == 'A':
         return '인도네시아'
     elif prefix == 'V':
-        r2l = r2.lower()
         if '하노이' in r2l or 'hanoi' in r2l or 'ha noi' in r2l:
             return '베트남 하노이'
         return '베트남 호치민'
     elif prefix == 'H':
-        r1l = r1.lower()
         if '미얀마' in r1l or 'myanmar' in r1l or 'myan' in r1l:
             return '미얀마'
         return '한국'
-    else:
-        return r1 or '기타'
+
+    # ② 앞글자로 구분 불가 → region1 + region2 조합으로 추론
+    # 베트남 세분화
+    if '베트남' in r1l or 'viet' in r1l:
+        if '하노이' in r2l or 'hanoi' in r2l or 'ha noi' in r2l:
+            return '베트남 하노이'
+        if '호치민' in r2l or 'ho chi' in r2l or 'hcm' in r2l:
+            return '베트남 호치민'
+        return '베트남 호치민'   # 기본값
+
+    # 중국 세분화 (region2에 도시명이 있으면 사용)
+    if '중국' in r1l or 'china' in r1l:
+        if '청도' in r2l or 'qingdao' in r2l or 'qing dao' in r2l:
+            return '중국 청도'
+        if '상해' in r2l or 'shanghai' in r2l or 'shang hai' in r2l:
+            return '중국 상해'
+        if '연태' in r2l or '연대' in r2l or 'yantai' in r2l or 'yan tai' in r2l:
+            return '중국 연태'
+        # region2가 없으면 region1만으로 '중국' 반환 (세분화 불가)
+        return '중국'
+
+    # 기타 국가
+    if '미얀마' in r1l or 'myanmar' in r1l:
+        return '미얀마'
+    if '인도네시아' in r1l or 'indonesia' in r1l:
+        return '인도네시아'
+    if '한국' in r1l or 'korea' in r1l:
+        return '한국'
+    if '캄보디아' in r1l or 'cambodia' in r1l:
+        return '캄보디아'
+
+    return r1 or '기타'
 
 
 def _to_int(val):
