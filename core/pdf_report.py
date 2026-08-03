@@ -96,6 +96,7 @@ def _korean_font_for_matplotlib():
 
 
 def _make_trend_chart(monthly, factory_name, font_name):
+    """1차 불량률 단일 추이 차트 (최종 데이터 없을 때 fallback)"""
     if not MATPLOTLIB_OK or not monthly:
         return None
     months = [m["month"] for m in monthly if m.get("rate") is not None]
@@ -110,10 +111,68 @@ def _make_trend_chart(monthly, factory_name, font_name):
         ax.plot(months, rates, marker='o', linewidth=2.5, color='#2B5BA8',
                 markersize=6, markerfacecolor='white', markeredgewidth=2)
         ax.fill_between(months, rates, alpha=0.08, color='#2B5BA8')
-    ax.set_title(f"{factory_name} — 월별 불량률 추이", fontsize=13, pad=12)
+    ax.set_title(f"{factory_name} — 월별 1차 불량률 추이", fontsize=13, pad=12)
     ax.set_ylabel("불량률 (%)")
     ax.set_ylim(bottom=0)
     ax.grid(axis='y', linestyle='--', alpha=0.4)
+    plt.xticks(rotation=30, ha='right', fontsize=9)
+    plt.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=130, bbox_inches='tight')
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+def _make_dual_trend_chart(monthly, factory_name, font_name):
+    """1차 / 최종 불량률 이중 추이 차트"""
+    if not MATPLOTLIB_OK or not monthly:
+        return None
+    valid = [m for m in monthly if m.get("rate") is not None]
+    if not valid:
+        return None
+    months  = [m["month"] for m in valid]
+    rates1  = [m["rate"] for m in valid]
+    rates2  = [m.get("final_rate") for m in valid]
+    corr    = [m.get("correction_rate") for m in valid]
+    has_final = any(r is not None and r > 0 for r in rates2)
+
+    plt.rcParams["font.family"] = font_name
+    if has_final:
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9, 5.5), sharex=True,
+                                        gridspec_kw={'height_ratios': [3, 2]})
+    else:
+        fig, ax1 = plt.subplots(figsize=(9, 3.5))
+        ax2 = None
+
+    # 상단: 1차 / 최종 불량률
+    ax1.plot(months, rates1, marker='o', linewidth=2.5, color='#2B5BA8',
+             label='1차 불량률', markersize=6, markerfacecolor='white', markeredgewidth=2)
+    if has_final:
+        _r2 = [r if r is not None else 0 for r in rates2]
+        ax1.plot(months, _r2, marker='s', linewidth=2.5, color='#C0392B',
+                 label='최종 불량률', markersize=6, markerfacecolor='white', markeredgewidth=2)
+    ax1.set_title(f"{factory_name} — 월별 불량률 추이 (1차 vs 최종)", fontsize=12, pad=10)
+    ax1.set_ylabel("불량률 (%)")
+    ax1.set_ylim(bottom=0)
+    ax1.legend(fontsize=9, loc='upper right')
+    ax1.grid(axis='y', linestyle='--', alpha=0.4)
+
+    # 하단: 수정합격률
+    if ax2 is not None and any(c is not None and c > 0 for c in corr):
+        _corr = [c if c is not None else 0 for c in corr]
+        _colors = ['#27AE60' if c >= 80 else ('#E67E22' if c >= 60 else '#C0392B')
+                   for c in _corr]
+        ax2.bar(months, _corr, color=_colors, width=0.5, alpha=0.85)
+        for i, (m, c) in enumerate(zip(months, _corr)):
+            if c > 0:
+                ax2.text(i, c + 1, f'{c:.0f}%', ha='center', va='bottom', fontsize=8)
+        ax2.set_ylim(0, 110)
+        ax2.set_ylabel("수정합격률 (%)")
+        ax2.set_title("수정 합격률 추이", fontsize=10, pad=6)
+        ax2.grid(axis='y', linestyle='--', alpha=0.3)
+        ax2.axhline(80, color='#27AE60', linewidth=1, linestyle=':', alpha=0.7)
+
     plt.xticks(rotation=30, ha='right', fontsize=9)
     plt.tight_layout()
     buf = io.BytesIO()
@@ -181,17 +240,22 @@ def generate_factory_pdf(detail: dict) -> bytes:
     s_cell_c  = S('CC2', fontSize=9,  alignment=TA_CENTER)
     s_cell_r  = S('CR2', fontSize=9,  alignment=TA_RIGHT)
 
-    factory      = detail.get("factory", "")
-    region1      = detail.get("region1", "")
-    region2      = detail.get("region2", "")
-    buyers       = ", ".join(detail.get("buyers", [])) or "—"
-    total_inspec = detail.get("total_inspec", 0)
-    total_defect = detail.get("total_defect", 0)
-    record_count = detail.get("record_count", 0)
-    avg_rate     = round(total_defect / total_inspec * 100, 2) if total_inspec else 0
-    monthly      = detail.get("monthly", [])
-    top5         = detail.get("top5_defects", [])
-    today        = datetime.now().strftime("%Y년 %m월 %d일")
+    factory       = detail.get("factory", "")
+    region1       = detail.get("region1", "")
+    region2       = detail.get("region2", "")
+    buyers        = ", ".join(detail.get("buyers", [])) or "—"
+    total_inspec  = detail.get("total_inspec", 0)
+    total_defect  = detail.get("total_defect", 0)
+    total_final   = detail.get("total_final_defect", 0)
+    total_second  = detail.get("total_second_inspec", 0)
+    record_count  = detail.get("record_count", 0)
+    avg_rate      = detail.get("avg_rate") or (round(total_defect / total_inspec * 100, 2) if total_inspec else 0)
+    final_rate    = detail.get("final_rate") or 0
+    corr_rate     = detail.get("correction_rate") or 0
+    has_dual      = total_final > 0 or total_second > 0
+    monthly       = detail.get("monthly", [])
+    top5          = detail.get("top5_defects", [])
+    today         = datetime.now().strftime("%Y년 %m월 %d일")
 
     story = []
 
@@ -225,36 +289,71 @@ def generate_factory_pdf(detail: dict) -> bytes:
     story.append(info_tbl)
     story.append(Spacer(1, 12))
 
-    # KPI 카드
-    rate_color = GREEN if avg_rate < 1.5 else (colors.orange if avg_rate < 3 else RED)
-    kpi_data = [[
-        Paragraph(f"<b>{avg_rate:.1f}%</b><br/><font size=9 color='grey'>평균 불량률</font>", s_cell_c),
-        Paragraph(f"<b>{total_defect:,}</b><br/><font size=9 color='grey'>총 불량수량</font>", s_cell_c),
-        Paragraph(f"<b>{len(monthly)}</b><br/><font size=9 color='grey'>분석 기간(월)</font>", s_cell_c),
-    ]]
-    kpi_tbl = Table(kpi_data, colWidths=[5.5*cm]*3)
-    kpi_tbl.setStyle(TableStyle([
-        ('FONTNAME',   (0,0), (-1,-1), font_name),
-        ('FONTSIZE',   (0,0), (-1,-1), 16),
-        ('TEXTCOLOR',  (0,0), (0,0),   rate_color),
-        ('TEXTCOLOR',  (1,0), (1,0),   PRIMARY),
-        ('TEXTCOLOR',  (2,0), (2,0),   GRAY),
-        ('ALIGN',      (0,0), (-1,-1), 'CENTER'),
-        ('VALIGN',     (0,0), (-1,-1), 'MIDDLE'),
-        ('BOX',        (0,0), (0,0),   1, colors.lightgrey),
-        ('BOX',        (1,0), (1,0),   1, colors.lightgrey),
-        ('BOX',        (2,0), (2,0),   1, colors.lightgrey),
-        ('ROWBACKGROUNDS', (0,0), (-1,-1), [LIGHT]),
-        ('PADDING',    (0,0), (-1,-1), 14),
-    ]))
+    # KPI 카드 (1차불량률 / 최종불량률 / 수정합격률 / 총불량수량 / 분석기간)
+    rate_color  = GREEN if avg_rate  < 1.5 else (colors.orange if avg_rate  < 3 else RED)
+    final_color = GREEN if final_rate < 1.5 else (colors.orange if final_rate < 3 else RED)
+    corr_color  = GREEN if corr_rate >= 80 else (colors.orange if corr_rate >= 60 else RED)
+    if has_dual:
+        kpi_data = [[
+            Paragraph(f"<b>{avg_rate:.2f}%</b><br/><font size=8 color='grey'>1차 불량률</font>", s_cell_c),
+            Paragraph(f"<b>{final_rate:.2f}%</b><br/><font size=8 color='grey'>최종 불량률</font>", s_cell_c),
+            Paragraph(f"<b>{corr_rate:.1f}%</b><br/><font size=8 color='grey'>수정 합격률</font>", s_cell_c),
+            Paragraph(f"<b>{total_defect:,}</b><br/><font size=8 color='grey'>1차불량수량</font>", s_cell_c),
+            Paragraph(f"<b>{len(monthly)}</b><br/><font size=8 color='grey'>분석 기간(월)</font>", s_cell_c),
+        ]]
+        kpi_tbl = Table(kpi_data, colWidths=[3.3*cm]*5)
+        kpi_tbl.setStyle(TableStyle([
+            ('FONTNAME',   (0,0), (-1,-1), font_name),
+            ('FONTSIZE',   (0,0), (-1,-1), 15),
+            ('TEXTCOLOR',  (0,0), (0,0),   rate_color),
+            ('TEXTCOLOR',  (1,0), (1,0),   final_color),
+            ('TEXTCOLOR',  (2,0), (2,0),   corr_color),
+            ('TEXTCOLOR',  (3,0), (3,0),   PRIMARY),
+            ('TEXTCOLOR',  (4,0), (4,0),   GRAY),
+            ('ALIGN',      (0,0), (-1,-1), 'CENTER'),
+            ('VALIGN',     (0,0), (-1,-1), 'MIDDLE'),
+            ('BOX',        (0,0), (0,0),   1, colors.lightgrey),
+            ('BOX',        (1,0), (1,0),   1, colors.lightgrey),
+            ('BOX',        (2,0), (2,0),   1, colors.lightgrey),
+            ('BOX',        (3,0), (3,0),   1, colors.lightgrey),
+            ('BOX',        (4,0), (4,0),   1, colors.lightgrey),
+            ('ROWBACKGROUNDS', (0,0), (-1,-1), [LIGHT]),
+            ('PADDING',    (0,0), (-1,-1), 12),
+        ]))
+    else:
+        kpi_data = [[
+            Paragraph(f"<b>{avg_rate:.2f}%</b><br/><font size=9 color='grey'>평균 불량률</font>", s_cell_c),
+            Paragraph(f"<b>{total_defect:,}</b><br/><font size=9 color='grey'>총 불량수량</font>", s_cell_c),
+            Paragraph(f"<b>{len(monthly)}</b><br/><font size=9 color='grey'>분석 기간(월)</font>", s_cell_c),
+        ]]
+        kpi_tbl = Table(kpi_data, colWidths=[5.5*cm]*3)
+        kpi_tbl.setStyle(TableStyle([
+            ('FONTNAME',   (0,0), (-1,-1), font_name),
+            ('FONTSIZE',   (0,0), (-1,-1), 16),
+            ('TEXTCOLOR',  (0,0), (0,0),   rate_color),
+            ('TEXTCOLOR',  (1,0), (1,0),   PRIMARY),
+            ('TEXTCOLOR',  (2,0), (2,0),   GRAY),
+            ('ALIGN',      (0,0), (-1,-1), 'CENTER'),
+            ('VALIGN',     (0,0), (-1,-1), 'MIDDLE'),
+            ('BOX',        (0,0), (0,0),   1, colors.lightgrey),
+            ('BOX',        (1,0), (1,0),   1, colors.lightgrey),
+            ('BOX',        (2,0), (2,0),   1, colors.lightgrey),
+            ('ROWBACKGROUNDS', (0,0), (-1,-1), [LIGHT]),
+            ('PADDING',    (0,0), (-1,-1), 14),
+        ]))
     story.append(kpi_tbl)
     story.append(Spacer(1, 16))
 
-    # 월별 추이 차트
+    # 월별 추이 차트 (1차+최종 데이터가 있으면 이중, 없으면 단일)
     story.append(Paragraph("■ 월별 불량률 추이", s_section))
-    trend_png = _make_trend_chart(monthly, factory, mpl_font)
+    if has_dual:
+        trend_png = _make_dual_trend_chart(monthly, factory, mpl_font)
+        chart_h = 9.5 * cm
+    else:
+        trend_png = _make_trend_chart(monthly, factory, mpl_font)
+        chart_h = 6.5 * cm
     if trend_png:
-        story.append(Image(io.BytesIO(trend_png), width=16*cm, height=6.5*cm))
+        story.append(Image(io.BytesIO(trend_png), width=16*cm, height=chart_h))
     else:
         story.append(Paragraph("(차트 생성 불가 — matplotlib 설치 필요)", s_body))
     story.append(Spacer(1, 12))
@@ -293,31 +392,54 @@ def generate_factory_pdf(detail: dict) -> bytes:
 
     # 월별 상세 테이블
     story.append(Paragraph("■ 월별 검사 실적", s_section))
-    m_rows = [[
-        Paragraph("<b>연월</b>", s_cell_c),
-        Paragraph("<b>검사수량</b>", s_cell_c),
-        Paragraph("<b>불량수량</b>", s_cell_c),
-        Paragraph("<b>불량률</b>", s_cell_c),
-        Paragraph("<b>평가</b>", s_cell_c),
-    ]]
-    for m in monthly:
-        rate = m.get("rate")
-        if rate is None:
-            rate_str, eval_str = "—", "—"
-        else:
-            rate_str = f"{rate:.2f}%"
-            if rate < 1.0:   eval_str = "우수"
-            elif rate < 2.0: eval_str = "양호"
-            elif rate < 3.5: eval_str = "주의"
-            else:            eval_str = "불량"
-        m_rows.append([
-            Paragraph(m["month"], s_cell_c),
-            Paragraph(f"{m.get('inspec',0):,}", s_cell_r),
-            Paragraph(f"{m.get('defect',0):,}", s_cell_r),
-            Paragraph(rate_str, s_cell_c),
-            Paragraph(eval_str, s_cell_c),
-        ])
-    m_tbl = Table(m_rows, colWidths=[3*cm, 3.5*cm, 3.5*cm, 3*cm, 3.5*cm])
+    if has_dual:
+        m_rows = [[
+            Paragraph("<b>연월</b>", s_cell_c),
+            Paragraph("<b>검사수량</b>", s_cell_c),
+            Paragraph("<b>1차불량수량</b>", s_cell_c),
+            Paragraph("<b>1차불량률</b>", s_cell_c),
+            Paragraph("<b>최종불량수량</b>", s_cell_c),
+            Paragraph("<b>최종불량률</b>", s_cell_c),
+            Paragraph("<b>수정합격률</b>", s_cell_c),
+        ]]
+        for m in monthly:
+            r1 = m.get("rate");  r2 = m.get("final_rate"); rc = m.get("correction_rate")
+            m_rows.append([
+                Paragraph(m["month"], s_cell_c),
+                Paragraph(f"{m.get('inspec',0):,}", s_cell_r),
+                Paragraph(f"{m.get('defect',0):,}", s_cell_r),
+                Paragraph(f"{r1:.2f}%" if r1 is not None else "—", s_cell_c),
+                Paragraph(f"{m.get('final_defect',0):,}", s_cell_r),
+                Paragraph(f"{r2:.2f}%" if r2 is not None else "—", s_cell_c),
+                Paragraph(f"{rc:.1f}%" if rc is not None else "—", s_cell_c),
+            ])
+        m_tbl = Table(m_rows, colWidths=[2.2*cm, 2.4*cm, 2.4*cm, 2.2*cm, 2.4*cm, 2.2*cm, 2.2*cm])
+    else:
+        m_rows = [[
+            Paragraph("<b>연월</b>", s_cell_c),
+            Paragraph("<b>검사수량</b>", s_cell_c),
+            Paragraph("<b>불량수량</b>", s_cell_c),
+            Paragraph("<b>불량률</b>", s_cell_c),
+            Paragraph("<b>평가</b>", s_cell_c),
+        ]]
+        for m in monthly:
+            rate = m.get("rate")
+            if rate is None:
+                rate_str, eval_str = "—", "—"
+            else:
+                rate_str = f"{rate:.2f}%"
+                if rate < 1.0:   eval_str = "우수"
+                elif rate < 2.0: eval_str = "양호"
+                elif rate < 3.5: eval_str = "주의"
+                else:            eval_str = "불량"
+            m_rows.append([
+                Paragraph(m["month"], s_cell_c),
+                Paragraph(f"{m.get('inspec',0):,}", s_cell_r),
+                Paragraph(f"{m.get('defect',0):,}", s_cell_r),
+                Paragraph(rate_str, s_cell_c),
+                Paragraph(eval_str, s_cell_c),
+            ])
+        m_tbl = Table(m_rows, colWidths=[3*cm, 3.5*cm, 3.5*cm, 3*cm, 3.5*cm])
     m_tbl.setStyle(TableStyle([
         ('FONTNAME',   (0,0), (-1,-1), font_name),
         ('BACKGROUND', (0,0), (-1,0),  PRIMARY),

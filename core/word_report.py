@@ -111,50 +111,83 @@ def aggregate(raw_rows: list, cache: dict) -> dict:
     total_inspec  = sum(_safe_int(r.get('inspec')) for r in raw_rows)
     total_defect  = sum(_safe_int(r.get('qty_total')) for r in raw_rows)
     total_rate    = _rate(total_defect, total_inspec)
+    # 1차/최종 구분 필드
+    total_final_defect  = sum(_safe_int(r.get('최종불합격수량')) for r in raw_rows)
+    total_second_inspec = sum(_safe_int(r.get('2차검사수량'))    for r in raw_rows)
+    total_final_rate    = _rate(total_final_defect, total_inspec)
+    total_correction    = (_rate(total_second_inspec - total_final_defect, total_second_inspec)
+                           if total_second_inspec > 0 else 0.0)
 
     # ── 2. 월별 ────────────────────────────────────
     monthly_inspec  = defaultdict(int)
     monthly_defect  = defaultdict(int)
+    monthly_final   = defaultdict(int)
+    monthly_second  = defaultdict(int)
     for r in raw_rows:
         ym = (r.get('date') or '')[:7]
         if not ym:
             continue
         monthly_inspec[ym] += _safe_int(r.get('inspec'))
         monthly_defect[ym] += _safe_int(r.get('qty_total'))
+        monthly_final[ym]  += _safe_int(r.get('최종불합격수량'))
+        monthly_second[ym] += _safe_int(r.get('2차검사수량'))
     monthly = sorted([
         {"month": ym, "inspec": monthly_inspec[ym],
          "defect": monthly_defect[ym],
-         "rate": _rate(monthly_defect[ym], monthly_inspec[ym])}
+         "rate": _rate(monthly_defect[ym], monthly_inspec[ym]),
+         "final_defect": monthly_final[ym],
+         "final_rate": _rate(monthly_final[ym], monthly_inspec[ym]),
+         "second_inspec": monthly_second[ym],
+         "correction_rate": (_rate(monthly_second[ym] - monthly_final[ym], monthly_second[ym])
+                             if monthly_second[ym] > 0 else 0.0)}
         for ym in monthly_inspec
     ], key=lambda x: x["month"])
 
     # ── 3. 업체별 ──────────────────────────────────
     client_inspec  = defaultdict(int)
     client_defect  = defaultdict(int)
+    client_final   = defaultdict(int)
+    client_second  = defaultdict(int)
     for r in raw_rows:
         c = str(r.get('client') or r.get('buyer') or '미확인').strip()
         client_inspec[c] += _safe_int(r.get('inspec'))
         client_defect[c] += _safe_int(r.get('qty_total'))
+        client_final[c]  += _safe_int(r.get('최종불합격수량'))
+        client_second[c] += _safe_int(r.get('2차검사수량'))
     by_client = sorted([
         {"name": c, "inspec": client_inspec[c],
          "defect": client_defect[c],
-         "rate": _rate(client_defect[c], client_inspec[c])}
+         "rate": _rate(client_defect[c], client_inspec[c]),
+         "final_defect": client_final[c],
+         "final_rate": _rate(client_final[c], client_inspec[c]),
+         "second_inspec": client_second[c],
+         "correction_rate": (_rate(client_second[c] - client_final[c], client_second[c])
+                             if client_second[c] > 0 else 0.0)}
         for c in client_inspec
     ], key=lambda x: x["rate"], reverse=True)
 
     # ── 3-2. 국가별 불량률 ─────────────────────────
     country_inspec = defaultdict(int)
     country_defect = defaultdict(int)
+    country_final  = defaultdict(int)
+    country_second = defaultdict(int)
     for r in raw_rows:
         country = str(r.get('region1') or '미확인').strip()
         if not country:
             country = '미확인'
         country_inspec[country] += _safe_int(r.get('inspec'))
         country_defect[country] += _safe_int(r.get('qty_total'))
+        country_final[country]  += _safe_int(r.get('최종불합격수량'))
+        country_second[country] += _safe_int(r.get('2차검사수량'))
     by_country = sorted([
         {"name": c, "inspec": country_inspec[c],
          "defect": country_defect[c],
-         "rate": _rate(country_defect[c], country_inspec[c])}
+         "rate": _rate(country_defect[c], country_inspec[c]),
+         "final_defect": country_final[c],
+         "final_rate": _rate(country_final[c], country_inspec[c]),
+         "second_inspec": country_second[c],
+         "correction_rate": (_rate(country_second[c] - country_final[c], country_second[c])
+                             if country_second[c] > 0 else 0.0)}
         for c in country_inspec
     ], key=lambda x: x["rate"], reverse=True)
 
@@ -246,7 +279,11 @@ def aggregate(raw_rows: list, cache: dict) -> dict:
 
     return {
         "period": period,
-        "summary": {"inspec": total_inspec, "defect": total_defect, "rate": total_rate},
+        "summary": {
+            "inspec": total_inspec, "defect": total_defect, "rate": total_rate,
+            "final_defect": total_final_defect, "final_rate": total_final_rate,
+            "second_inspec": total_second_inspec, "correction": total_correction,
+        },
         "monthly": monthly,
         "by_country": by_country,
         "by_client": by_client,
@@ -425,6 +462,85 @@ def _chart_factory(by_factory, avg_rate):
     return _fig_bytes(fig)
 
 
+# ── 1차 / 최종 이중 바차트 ────────────────────────────────────────
+
+def _chart_monthly_dual(monthly, avg1, avg2):
+    """1차 / 최종 불량률 월별 이중 바차트"""
+    months = [d["month"] for d in monthly]
+    rates1 = [d["rate"] for d in monthly]
+    rates2 = [d.get("final_rate", 0) for d in monthly]
+    x = list(range(len(months))); width = 0.36
+    fig, ax = plt.subplots(figsize=(max(9, len(months) * 0.8), 3.5))
+    b1 = ax.bar([i - width/2 for i in x], rates1, width, color=MB, label='1차 불량률', zorder=2)
+    b2 = ax.bar([i + width/2 for i in x], rates2, width, color=MR, label='최종 불량률', zorder=2)
+    if avg1:
+        ax.axhline(avg1, color=MB, linewidth=1.2, linestyle='--', alpha=0.7,
+                   label=f'1차 평균 {avg1:.2f}%')
+    if avg2:
+        ax.axhline(avg2, color=MR, linewidth=1.2, linestyle='--', alpha=0.7,
+                   label=f'최종 평균 {avg2:.2f}%')
+    for b, r in zip(b1.patches, rates1):
+        if r > 0:
+            ax.text(b.get_x() + b.get_width()/2, b.get_height() + 0.03,
+                    f'{r:.2f}%', ha='center', va='bottom', fontsize=7, color=MB)
+    for b, r in zip(b2.patches, rates2):
+        if r > 0:
+            ax.text(b.get_x() + b.get_width()/2, b.get_height() + 0.03,
+                    f'{r:.2f}%', ha='center', va='bottom', fontsize=7, color=MR)
+    ax.set_xticks(x); ax.set_xticklabels(months, rotation=20, fontsize=8)
+    ax.set_ylabel('Defect Rate (%)', fontsize=9)
+    ax.set_title('Monthly Defect Rate Trend  (1차 vs 최종)', fontsize=11, fontweight='bold')
+    ax.legend(fontsize=8, ncol=2); ax.grid(axis='y', alpha=0.3, zorder=1)
+    ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    fig.tight_layout(); return _fig_bytes(fig)
+
+
+def _chart_country_dual(by_country, avg1, avg2):
+    """국가별 1차 / 최종 이중 바차트"""
+    names  = [d["name"] for d in by_country]
+    rates1 = [d["rate"] for d in by_country]
+    rates2 = [d.get("final_rate", 0) for d in by_country]
+    x = list(range(len(names))); width = 0.36
+    fig, ax = plt.subplots(figsize=(max(6, len(names) * 1.4), 3.5))
+    ax.bar([i - width/2 for i in x], rates1, width, color=MB, label='1차 불량률')
+    ax.bar([i + width/2 for i in x], rates2, width, color=MR, label='최종 불량률')
+    if avg1:
+        ax.axhline(avg1, color=MB, linewidth=1.2, linestyle='--', alpha=0.7,
+                   label=f'1차 평균 {avg1:.2f}%')
+    if avg2:
+        ax.axhline(avg2, color=MR, linewidth=1.2, linestyle='--', alpha=0.7,
+                   label=f'최종 평균 {avg2:.2f}%')
+    ax.set_xticks(x); ax.set_xticklabels(names, fontsize=9)
+    ax.set_ylabel('Defect Rate (%)', fontsize=9)
+    ax.set_title('Defect Rate by Country  (1차 vs 최종)', fontsize=11, fontweight='bold')
+    ax.legend(fontsize=8, ncol=2); ax.grid(axis='y', alpha=0.3)
+    ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    fig.tight_layout(); return _fig_bytes(fig)
+
+
+def _chart_client_dual(by_client, avg1, avg2):
+    """업체별 1차 / 최종 수평 이중 바차트"""
+    names  = [d["name"] for d in by_client]
+    rates1 = [d["rate"] for d in by_client]
+    rates2 = [d.get("final_rate", 0) for d in by_client]
+    x = list(range(len(names))); width = 0.36
+    fig, ax = plt.subplots(figsize=(7, max(3.5, len(names) * 0.6 + 1)))
+    ax.barh([i + width/2 for i in x], rates1, width, color=MB, label='1차 불량률')
+    ax.barh([i - width/2 for i in x], rates2, width, color=MR, label='최종 불량률')
+    if avg1:
+        ax.axvline(avg1, color=MB, linewidth=1.2, linestyle='--', alpha=0.7,
+                   label=f'1차 평균 {avg1:.2f}%')
+    if avg2:
+        ax.axvline(avg2, color=MR, linewidth=1.2, linestyle='--', alpha=0.7,
+                   label=f'최종 평균 {avg2:.2f}%')
+    ax.set_yticks(x); ax.set_yticklabels(names, fontsize=8)
+    ax.set_xlabel('Defect Rate (%)', fontsize=9)
+    ax.set_title('Defect Rate by Client  (1차 vs 최종)', fontsize=11, fontweight='bold')
+    ax.legend(fontsize=8, ncol=2); ax.grid(axis='x', alpha=0.3)
+    ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    fig.tight_layout(); return _fig_bytes(fig)
+
+
 # ── docx 헬퍼 ────────────────────────────────────────────────────
 
 def _shd(cell, hex_color):
@@ -530,10 +646,12 @@ def _make_table(doc, headers, rows_data, col_widths=None):
 
 # ── 보고서 생성 메인 ──────────────────────────────────────────────
 
-def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portrait') -> bytes:
+def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portrait',
+                         report_mode: str = '전체') -> bytes:
     """
     raw_rows + cache → .docx 파일 bytes 반환
-    orientation: 'portrait'(세로형, 기본) | 'landscape'(가로형)
+    orientation:  'portrait'(세로형, 기본) | 'landscape'(가로형)
+    report_mode:  '전체' | '1차 불량률' | '1차 불량률 + 최종 불량률'
     """
     if not DOCX_OK:
         raise RuntimeError("python-docx 설치 필요: pip install python-docx")
@@ -542,6 +660,10 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
     period  = data["period"]
     summary = data["summary"]
     avg     = summary["rate"]
+    IS_DUAL = (report_mode == '1차 불량률 + 최종 불량률')
+    IS_1ST  = (report_mode == '1차 불량률')
+    avg_final = summary.get("final_rate", 0.0)
+    avg_corr  = summary.get("correction", 0.0)
 
     # 방향별 페이지 설정
     IS_LAND = (orientation == 'landscape')
@@ -580,66 +702,142 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
     _hr(doc)
 
     # ── 섹션1: 전체 불량률 요약 ───────────────────────────────────
-    _sec_title(doc, "1. 전체 불량률 요약")
-    summary_tbl = doc.add_table(rows=2, cols=3)
-    summary_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-    for cell, h in zip(summary_tbl.rows[0].cells,
-                       ["총 검사수량", "총 불량수량", "전체 불량률"]):
-        _ct(cell, h, bold=True, sz=9, color=RGBColor(0xFF,0xFF,0xFF))
-        _shd(cell, C_THEAD); _bdr(cell)
-    vals = [f"{summary['inspec']:,} 개", f"{summary['defect']:,} 개",
-            f"{avg:.2f} %"]
-    for i, (cell, v) in enumerate(zip(summary_tbl.rows[1].cells, vals)):
-        _ct(cell, v, bold=True, sz=14,
-            color=(C_RED if i == 2 else C_DARK))
-        _shd(cell, "F7FBFF"); _bdr(cell)
+    _title1 = "1. 전체 불량률 요약  (1차 / 최종 구분)" if IS_DUAL else "1. 전체 불량률 요약"
+    _sec_title(doc, _title1)
+    if IS_DUAL:
+        _hdrs1 = ["총 검사수량", "1차 불량수량", "1차 불량률", "최종 불량수량", "최종 불량률", "수정 합격률"]
+        _vals1 = [f"{summary['inspec']:,} 개",
+                  f"{summary['defect']:,} 개", f"{avg:.2f} %",
+                  f"{summary['final_defect']:,} 개", f"{avg_final:.2f} %",
+                  f"{avg_corr:.2f} %"]
+        summary_tbl = doc.add_table(rows=2, cols=6)
+        summary_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+        for cell, h in zip(summary_tbl.rows[0].cells, _hdrs1):
+            _ct(cell, h, bold=True, sz=8.5, color=RGBColor(0xFF, 0xFF, 0xFF))
+            _shd(cell, C_THEAD); _bdr(cell)
+        for i, (cell, v) in enumerate(zip(summary_tbl.rows[1].cells, _vals1)):
+            _ct(cell, v, bold=True, sz=12,
+                color=(C_RED if i in (2, 4) else (C_GREEN if i == 5 else C_DARK)))
+            _shd(cell, "F7FBFF"); _bdr(cell)
+    else:
+        _lbl_d = "1차 불량수량" if IS_1ST else "총 불량수량"
+        _lbl_r = "1차 불량률"   if IS_1ST else "전체 불량률"
+        summary_tbl = doc.add_table(rows=2, cols=3)
+        summary_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+        for cell, h in zip(summary_tbl.rows[0].cells, ["총 검사수량", _lbl_d, _lbl_r]):
+            _ct(cell, h, bold=True, sz=9, color=RGBColor(0xFF, 0xFF, 0xFF))
+            _shd(cell, C_THEAD); _bdr(cell)
+        vals = [f"{summary['inspec']:,} 개", f"{summary['defect']:,} 개", f"{avg:.2f} %"]
+        for i, (cell, v) in enumerate(zip(summary_tbl.rows[1].cells, vals)):
+            _ct(cell, v, bold=True, sz=14, color=(C_RED if i == 2 else C_DARK))
+            _shd(cell, "F7FBFF"); _bdr(cell)
 
     if MPL_OK and data["monthly"]:
         _spacer(doc)
-        _img_para(doc, _chart_monthly(data["monthly"], avg), CW_FULL)
+        if IS_DUAL:
+            _img_para(doc, _chart_monthly_dual(data["monthly"], avg, avg_final), CW_FULL)
+        else:
+            _img_para(doc, _chart_monthly(data["monthly"], avg), CW_FULL)
 
     # ── 섹션2: 국가별 불량률 ─────────────────────────────────────
     _sec_title(doc, "2. 국가별 불량률")
     rows2c = []
-    for d in data["by_country"]:
-        diff = d["rate"] - avg
-        ds = f"▲ +{diff:.2f}%" if diff > 0 else f"▼ {diff:.2f}%"
-        dc = C_RED if diff > 0 else C_GREEN
-        rows2c.append([
-            (d["name"], False, None, WD_ALIGN_PARAGRAPH.LEFT),
-            (f"{d['inspec']:,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
-            (f"{d['defect']:,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
-            (f"{d['rate']:.2f}%", False,
-             C_RED if d["rate"] > avg else None, WD_ALIGN_PARAGRAPH.CENTER),
-            (ds, False, dc, WD_ALIGN_PARAGRAPH.CENTER),
-        ])
-    _make_table(doc, ["국가명","검사수량(개)","불량수량(개)","불량률(%)","평균 대비"], rows2c)
-    if MPL_OK and data["by_country"]:
-        _spacer(doc)
-        _img_para(doc, _chart_country(data["by_country"], avg), CW_HALF)
+    if IS_DUAL:
+        for d in data["by_country"]:
+            d1 = d["rate"] - avg;  d2 = d.get("final_rate", 0) - avg_final
+            s1 = f"▲ +{d1:.2f}%" if d1 > 0 else f"▼ {d1:.2f}%"
+            s2 = f"▲ +{d2:.2f}%" if d2 > 0 else f"▼ {d2:.2f}%"
+            rows2c.append([
+                (d["name"], False, None, WD_ALIGN_PARAGRAPH.LEFT),
+                (f"{d['inspec']:,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{d['defect']:,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{d['rate']:.2f}%", False,
+                 C_RED if d["rate"] > avg else None, WD_ALIGN_PARAGRAPH.CENTER),
+                (s1, False, C_RED if d1 > 0 else C_GREEN, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{d.get('final_defect', 0):,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{d.get('final_rate', 0):.2f}%", False,
+                 C_RED if d.get('final_rate', 0) > avg_final else None, WD_ALIGN_PARAGRAPH.CENTER),
+                (s2, False, C_RED if d2 > 0 else C_GREEN, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{d.get('correction_rate', 0):.1f}%", False,
+                 C_GREEN if d.get('correction_rate', 0) >= 80 else None, WD_ALIGN_PARAGRAPH.CENTER),
+            ])
+        _make_table(doc,
+            ["국가명","검사수량(개)","1차불량수량","1차불량률(%)","1차평균대비",
+             "최종불량수량","최종불량률(%)","최종평균대비","수정합격률(%)"], rows2c)
+        if MPL_OK and data["by_country"]:
+            _spacer(doc)
+            _img_para(doc, _chart_country_dual(data["by_country"], avg, avg_final), CW_HALF)
+    else:
+        _lbl_d = "1차불량수량(개)" if IS_1ST else "불량수량(개)"
+        _lbl_r = "1차불량률(%)"   if IS_1ST else "불량률(%)"
+        for d in data["by_country"]:
+            diff = d["rate"] - avg
+            ds = f"▲ +{diff:.2f}%" if diff > 0 else f"▼ {diff:.2f}%"
+            dc = C_RED if diff > 0 else C_GREEN
+            rows2c.append([
+                (d["name"], False, None, WD_ALIGN_PARAGRAPH.LEFT),
+                (f"{d['inspec']:,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{d['defect']:,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{d['rate']:.2f}%", False,
+                 C_RED if d["rate"] > avg else None, WD_ALIGN_PARAGRAPH.CENTER),
+                (ds, False, dc, WD_ALIGN_PARAGRAPH.CENTER),
+            ])
+        _make_table(doc, ["국가명","검사수량(개)", _lbl_d, _lbl_r,"평균 대비"], rows2c)
+        if MPL_OK and data["by_country"]:
+            _spacer(doc)
+            _img_para(doc, _chart_country(data["by_country"], avg), CW_HALF)
 
     # ── 섹션3: 업체별 불량률 ─────────────────────────────────────
     _sec_title(doc, "3. 업체별 불량률")
     rows3 = []
-    for d in data["by_client"]:
-        diff = d["rate"] - avg
-        ds = f"▲ +{diff:.2f}%" if diff > 0 else f"▼ {diff:.2f}%"
-        dc = C_RED if diff > 0 else C_GREEN
-        rows3.append([
-            (d["name"], False, None, WD_ALIGN_PARAGRAPH.LEFT),
-            (f"{d['inspec']:,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
-            (f"{d['defect']:,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
-            (f"{d['rate']:.2f}%", False,
-             C_RED if d["rate"] > avg else None, WD_ALIGN_PARAGRAPH.CENTER),
-            (ds, False, dc, WD_ALIGN_PARAGRAPH.CENTER),
-        ])
-    _make_table(doc, ["업체명","검사수량(개)","불량수량(개)","불량률(%)","평균 대비"], rows3)
-    if MPL_OK and data["by_client"]:
-        _spacer(doc)
-        _img_para(doc, _chart_client(data["by_client"], avg), CW_HALF)
+    if IS_DUAL:
+        for d in data["by_client"]:
+            d1 = d["rate"] - avg;  d2 = d.get("final_rate", 0) - avg_final
+            s1 = f"▲ +{d1:.2f}%" if d1 > 0 else f"▼ {d1:.2f}%"
+            s2 = f"▲ +{d2:.2f}%" if d2 > 0 else f"▼ {d2:.2f}%"
+            rows3.append([
+                (d["name"], False, None, WD_ALIGN_PARAGRAPH.LEFT),
+                (f"{d['inspec']:,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{d['defect']:,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{d['rate']:.2f}%", False,
+                 C_RED if d["rate"] > avg else None, WD_ALIGN_PARAGRAPH.CENTER),
+                (s1, False, C_RED if d1 > 0 else C_GREEN, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{d.get('final_defect', 0):,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{d.get('final_rate', 0):.2f}%", False,
+                 C_RED if d.get('final_rate', 0) > avg_final else None, WD_ALIGN_PARAGRAPH.CENTER),
+                (s2, False, C_RED if d2 > 0 else C_GREEN, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{d.get('correction_rate', 0):.1f}%", False,
+                 C_GREEN if d.get('correction_rate', 0) >= 80 else None, WD_ALIGN_PARAGRAPH.CENTER),
+            ])
+        _make_table(doc,
+            ["업체명","검사수량(개)","1차불량수량","1차불량률(%)","1차평균대비",
+             "최종불량수량","최종불량률(%)","최종평균대비","수정합격률(%)"], rows3)
+        if MPL_OK and data["by_client"]:
+            _spacer(doc)
+            _img_para(doc, _chart_client_dual(data["by_client"], avg, avg_final), CW_HALF)
+    else:
+        _lbl_d = "1차불량수량(개)" if IS_1ST else "불량수량(개)"
+        _lbl_r = "1차불량률(%)"   if IS_1ST else "불량률(%)"
+        for d in data["by_client"]:
+            diff = d["rate"] - avg
+            ds = f"▲ +{diff:.2f}%" if diff > 0 else f"▼ {diff:.2f}%"
+            dc = C_RED if diff > 0 else C_GREEN
+            rows3.append([
+                (d["name"], False, None, WD_ALIGN_PARAGRAPH.LEFT),
+                (f"{d['inspec']:,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{d['defect']:,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),
+                (f"{d['rate']:.2f}%", False,
+                 C_RED if d["rate"] > avg else None, WD_ALIGN_PARAGRAPH.CENTER),
+                (ds, False, dc, WD_ALIGN_PARAGRAPH.CENTER),
+            ])
+        _make_table(doc, ["업체명","검사수량(개)", _lbl_d, _lbl_r,"평균 대비"], rows3)
+        if MPL_OK and data["by_client"]:
+            _spacer(doc)
+            _img_para(doc, _chart_client(data["by_client"], avg), CW_HALF)
 
-    # ── 섹션4: 품목 유형별 현황 ──────────────────────────────────
-    _sec_title(doc, "4. 품목 유형별 현황 (의류 / 잡화 / 신발)")
+    # ── 섹션4~8: 1차 불량률 기준 ─────────────────────────────────
+    _sfx = "  ※ 1차 불량률 기준" if IS_DUAL else ""
+    _sec_title(doc, f"4. 품목 유형별 현황 (의류 / 잡화 / 신발){_sfx}")
     rows4t = []
     for d in data.get("by_item_type", []):
         rows4t.append([
@@ -658,7 +856,7 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
             _img_para(doc, img, CW_HALF + 1)
 
     # ── 섹션5: 전체 세부 불량 유형 ───────────────────────────────
-    _sec_title(doc, f"5. 전체 세부 불량 유형  ※ 상위 {TOP_N}개 + 그외")
+    _sec_title(doc, f"5. 전체 세부 불량 유형  ※ 상위 {TOP_N}개 + 그외{_sfx}")
     cum = 0
     rows3 = []
     for d in data["defect_types"]:
@@ -675,7 +873,7 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
         _img_para(doc, _chart_defect(data["defect_types"]), CW_FULL)
 
     # ── 섹션6: 업체별 세부 불량 유형 ─────────────────────────────
-    _sec_title(doc, "6. 업체별 세부 불량 유형")
+    _sec_title(doc, f"6. 업체별 세부 불량 유형{_sfx}")
     type_cols = data["top_type_names"]
     rows4 = []
     for client in [d["name"] for d in data["by_client"]]:
@@ -687,7 +885,7 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
     _make_table(doc, ["업체명"] + type_cols, rows4)
 
     # ── 섹션7: 공장별 불량률 ─────────────────────────────────────
-    _sec_title(doc, "7. 공장별 불량률")
+    _sec_title(doc, f"7. 공장별 불량률{_sfx}")
     rows5 = []
     for d in data["by_factory"]:
         rows5.append([
@@ -703,7 +901,7 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
         _img_para(doc, _chart_factory(data["by_factory"], avg), CW_FULL)
 
     # ── 섹션8: 공장별 세부 불량 유형 ─────────────────────────────
-    _sec_title(doc, "8. 공장별 세부 불량 유형")
+    _sec_title(doc, f"8. 공장별 세부 불량 유형{_sfx}")
     rows6 = []
     for factory in [d["name"] for d in data["by_factory"]]:
         dmap = data["factory_defect_table"].get(factory, {})

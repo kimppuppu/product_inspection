@@ -55,7 +55,7 @@ def calc_factory_ranking(raw_rows: list[dict], cache: dict,
 
     # 공장별 월별 집계
     factory_monthly: dict[str, dict[str, dict]] = defaultdict(lambda: defaultdict(
-        lambda: {'inspec': 0, 'defect': 0, 'count': 0}
+        lambda: {'inspec': 0, 'defect': 0, 'final_defect': 0, 'second_inspec': 0, 'count': 0}
     ))
     factory_info: dict[str, dict] = {}
 
@@ -64,9 +64,11 @@ def calc_factory_ranking(raw_rows: list[dict], cache: dict,
         if not f or f == '(미입력)':
             continue
         ym = _parse_date(r.get('date')) or 'unknown'
-        factory_monthly[f][ym]['inspec'] += r.get('inspec', 0) or 0
-        factory_monthly[f][ym]['defect'] += r.get('qty_total', 0) or 0
-        factory_monthly[f][ym]['count']  += 1
+        factory_monthly[f][ym]['inspec']       += r.get('inspec', 0) or 0
+        factory_monthly[f][ym]['defect']       += r.get('qty_total', 0) or 0
+        factory_monthly[f][ym]['final_defect'] += r.get('최종불합격수량', 0) or 0
+        factory_monthly[f][ym]['second_inspec']+= r.get('2차검사수량', 0) or 0
+        factory_monthly[f][ym]['count']        += 1
         if f not in factory_info:
             factory_info[f] = {
                 'region1':       r.get('region1', ''),
@@ -79,35 +81,50 @@ def calc_factory_ranking(raw_rows: list[dict], cache: dict,
         months = sorted(m for m in monthly_data if m != 'unknown')
         total_inspec = sum(v['inspec'] for v in monthly_data.values())
         total_defect = sum(v['defect'] for v in monthly_data.values())
+        total_final  = sum(v.get('final_defect', 0) for v in monthly_data.values())
+        total_second = sum(v.get('second_inspec', 0) for v in monthly_data.values())
         total_count  = sum(v['count']  for v in monthly_data.values())
 
-        avg_rate = _safe_rate(total_defect, total_inspec)
+        avg_rate      = _safe_rate(total_defect, total_inspec)
+        final_rate    = _safe_rate(total_final, total_inspec)
+        corr_rate     = (_safe_rate(total_second - total_final, total_second)
+                         if total_second else None)
 
         # 월별 불량률 시계열
         monthly_rates = []
         for m in months:
             d = monthly_data[m]
+            _si = d.get('second_inspec', 0)
+            _fd = d.get('final_defect', 0)
             monthly_rates.append({
-                'month': m,
-                'rate': _safe_rate(d['defect'], d['inspec']),
-                'inspec': d['inspec'],
-                'defect': d['defect'],
+                'month':           m,
+                'rate':            _safe_rate(d['defect'], d['inspec']),
+                'inspec':          d['inspec'],
+                'defect':          d['defect'],
+                'final_defect':    _fd,
+                'final_rate':      _safe_rate(_fd, d['inspec']),
+                'second_inspec':   _si,
+                'correction_rate': (_safe_rate(_si - _fd, _si) if _si else None),
             })
 
         # 추이: 최근 3개월 선형 기울기
         trend = _calc_trend(monthly_rates)
 
         result.append({
-            'factory':      factory,
-            'region1':      factory_info[factory]['region1'],
-            'region2':      factory_info[factory]['region2'],
-            'region_label': factory_info[factory]['region_label'],
-            'avg_rate':     avg_rate,
-            'total_inspec': total_inspec,
-            'total_defect': total_defect,
-            'record_count': total_count,
-            'trend':        trend,
-            'monthly':      monthly_rates,
+            'factory':            factory,
+            'region1':            factory_info[factory]['region1'],
+            'region2':            factory_info[factory]['region2'],
+            'region_label':       factory_info[factory]['region_label'],
+            'avg_rate':           avg_rate,
+            'final_rate':         final_rate,
+            'correction_rate':    corr_rate,
+            'total_inspec':       total_inspec,
+            'total_defect':       total_defect,
+            'total_final_defect': total_final,
+            'total_second_inspec':total_second,
+            'record_count':       total_count,
+            'trend':              trend,
+            'monthly':            monthly_rates,
         })
 
     # 불량률 오름차순 정렬 (낮을수록 좋음), None은 끝으로
@@ -138,23 +155,32 @@ def calc_region_heatmap(raw_rows: list[dict],
     반환: [{ region1, avg_rate, total_inspec, total_defect, factory_count }]
     """
     rows = _filter_rows(raw_rows, start, end)
-    region: dict[str, dict] = defaultdict(lambda: {'inspec': 0, 'defect': 0, 'factories': set()})
+    region: dict[str, dict] = defaultdict(
+        lambda: {'inspec': 0, 'defect': 0, 'final_defect': 0, 'second_inspec': 0, 'factories': set()}
+    )
 
     for r in rows:
         reg = r.get('region_label') or r.get('region1') or '(미입력)'
-        region[reg]['inspec']    += r.get('inspec', 0) or 0
-        region[reg]['defect']    += r.get('qty_total', 0) or 0
+        region[reg]['inspec']        += r.get('inspec', 0) or 0
+        region[reg]['defect']        += r.get('qty_total', 0) or 0
+        region[reg]['final_defect']  += r.get('최종불합격수량', 0) or 0
+        region[reg]['second_inspec'] += r.get('2차검사수량', 0) or 0
         f = r.get('factory', '')
         if f: region[reg]['factories'].add(f)
 
     result = []
     for reg, d in region.items():
+        _si = d.get('second_inspec', 0)
+        _fd = d.get('final_defect', 0)
         result.append({
-            'region1':       reg,
-            'avg_rate':      _safe_rate(d['defect'], d['inspec']),
-            'total_inspec':  d['inspec'],
-            'total_defect':  d['defect'],
-            'factory_count': len(d['factories']),
+            'region1':         reg,
+            'avg_rate':        _safe_rate(d['defect'], d['inspec']),
+            'final_rate':      _safe_rate(_fd, d['inspec']),
+            'correction_rate': (_safe_rate(_si - _fd, _si) if _si else None),
+            'total_inspec':    d['inspec'],
+            'total_defect':    d['defect'],
+            'total_final':     _fd,
+            'factory_count':   len(d['factories']),
         })
     result.sort(key=lambda x: (x['avg_rate'] is None, x['avg_rate'] or 9999))
     return result
@@ -169,17 +195,32 @@ def calc_factory_detail(raw_rows: list[dict], cache: dict,
         return {}
 
     # 월별 추이
-    monthly: dict[str, dict] = defaultdict(lambda: {'inspec': 0, 'defect': 0})
+    monthly: dict[str, dict] = defaultdict(
+        lambda: {'inspec': 0, 'defect': 0, 'final_defect': 0, 'second_inspec': 0}
+    )
     for r in rows:
         ym = _parse_date(r.get('date')) or 'unknown'
-        monthly[ym]['inspec'] += r.get('inspec', 0) or 0
-        monthly[ym]['defect'] += r.get('qty_total', 0) or 0
+        monthly[ym]['inspec']        += r.get('inspec', 0) or 0
+        monthly[ym]['defect']        += r.get('qty_total', 0) or 0
+        monthly[ym]['final_defect']  += r.get('최종불합격수량', 0) or 0
+        monthly[ym]['second_inspec'] += r.get('2차검사수량', 0) or 0
 
-    monthly_list = [
-        {'month': m, 'rate': _safe_rate(d['defect'], d['inspec']),
-         'inspec': d['inspec'], 'defect': d['defect']}
-        for m, d in sorted(monthly.items()) if m != 'unknown'
-    ]
+    monthly_list = []
+    for m, d in sorted(monthly.items()):
+        if m == 'unknown':
+            continue
+        _si = d.get('second_inspec', 0)
+        _fd = d.get('final_defect', 0)
+        monthly_list.append({
+            'month':           m,
+            'rate':            _safe_rate(d['defect'], d['inspec']),
+            'inspec':          d['inspec'],
+            'defect':          d['defect'],
+            'final_defect':    _fd,
+            'final_rate':      _safe_rate(_fd, d['inspec']),
+            'second_inspec':   _si,
+            'correction_rate': (_safe_rate(_si - _fd, _si) if _si else None),
+        })
 
     # 불량 유형 TOP7 (표준불량명 기준)
     std_count: dict[str, int] = defaultdict(int)
@@ -193,15 +234,26 @@ def calc_factory_detail(raw_rows: list[dict], cache: dict,
     # 바이어 목록
     buyers = list({r.get('buyer', '') for r in rows if r.get('buyer')})
 
+    _total_inspec  = sum(r.get('inspec', 0) or 0 for r in rows)
+    _total_defect  = sum(r.get('qty_total', 0) or 0 for r in rows)
+    _total_final   = sum(r.get('최종불합격수량', 0) or 0 for r in rows)
+    _total_second  = sum(r.get('2차검사수량', 0) or 0 for r in rows)
+
     return {
-        'factory':       factory_name,
-        'region1':       rows[0].get('region1', ''),
-        'region2':       rows[0].get('region2', ''),
-        'buyers':        buyers,
-        'record_count':  len(rows),
-        'total_inspec':  sum(r.get('inspec', 0) or 0 for r in rows),
-        'total_defect':  sum(r.get('qty_total', 0) or 0 for r in rows),
-        'monthly':       monthly_list,
+        'factory':            factory_name,
+        'region1':            rows[0].get('region1', ''),
+        'region2':            rows[0].get('region2', ''),
+        'buyers':             buyers,
+        'record_count':       len(rows),
+        'total_inspec':       _total_inspec,
+        'total_defect':       _total_defect,
+        'total_final_defect': _total_final,
+        'total_second_inspec':_total_second,
+        'avg_rate':           _safe_rate(_total_defect, _total_inspec),
+        'final_rate':         _safe_rate(_total_final, _total_inspec),
+        'correction_rate':    (_safe_rate(_total_second - _total_final, _total_second)
+                               if _total_second else None),
+        'monthly':            monthly_list,
         'top5_defects': [
             {'name': name, 'qty': qty, 'pct': round(qty / total_defect_sum * 100, 1)}
             for name, qty in top5
