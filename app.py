@@ -979,9 +979,9 @@ def render_factory_tab():
                                        title="월별 1차 불량률 추이(%)")
                         st.plotly_chart(fig2, use_container_width=True)
 
-                if detail['top5_defects']:
+                if detail['top7_defects']:
                     st.markdown("**불량 유형 TOP7**")
-                    top5_df = pd.DataFrame(detail['top5_defects']).rename(
+                    top5_df = pd.DataFrame(detail['top7_defects']).rename(
                         columns={'name': '불량명', 'qty': '수량', 'pct': '비율(%)'}
                     )
                     top5_df.index = top5_df.index + 1
