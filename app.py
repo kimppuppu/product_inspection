@@ -766,20 +766,33 @@ def render_defect_tab():
         st.markdown("---")
         panel_title("📄 불량률 분석 보고서 (Word)")
         st.markdown("전체·업체별·공장별 불량률과 세부 불량 유형을 포함한 Word 보고서를 생성합니다.  \n※ 상위 7개 불량 유형 + 그외 · 차트 포함")
-        _orientation = st.radio(
-            "보고서 방향",
-            options=["세로형 (Portrait)", "가로형 (Landscape)"],
-            horizontal=True,
-            key="word_orientation",
-        )
+        _col_o, _col_m = st.columns(2)
+        with _col_o:
+            _orientation = st.radio(
+                "보고서 방향",
+                options=["세로형 (Portrait)", "가로형 (Landscape)"],
+                horizontal=True,
+                key="word_orientation",
+            )
+        with _col_m:
+            _report_mode = st.radio(
+                "불량률 기준",
+                options=["전체", "1차 불량률", "1차 불량률 + 최종 불량률"],
+                horizontal=True,
+                key="word_report_mode",
+                help="'1차 불량률 + 최종 불량률' 선택 시 섹션 1~3에 최종불량률·수정합격률 컬럼이 추가됩니다. 섹션 4~8은 항상 1차 불량률 기준입니다.",
+            )
         _orient_val = "landscape" if "가로형" in _orientation else "portrait"
+        _mode_tag   = "1차최종" if "최종" in _report_mode else ("1차" if "1차" in _report_mode else "전체")
         try:
-            word_bytes = generate_word_report(raw_rows, cache, orientation=_orient_val)
+            word_bytes = generate_word_report(raw_rows, cache,
+                                              orientation=_orient_val,
+                                              report_mode=_report_mode)
             today = datetime.now().strftime("%Y%m%d")
             st.download_button(
                 "📄 Word 보고서 다운로드",
                 data=word_bytes,
-                file_name=f"불량률분석보고서_{today}_{_orient_val[:4]}.docx",
+                file_name=f"불량률분석보고서_{today}_{_orient_val[:4]}_{_mode_tag}.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 key="dl_word",
             )
@@ -825,11 +838,16 @@ def render_factory_tab():
 
     panel_title("🏆 공장별 불량률 랭킹")
     if ranking:
-        rank_df = pd.DataFrame(ranking)[
-            ['rank', 'factory', 'region_label', 'avg_rate', 'total_inspec', 'total_defect', 'record_count', 'trend']
-        ].rename(columns={
+        _rank_cols = ['rank', 'factory', 'region_label',
+                      'avg_rate', 'final_rate', 'correction_rate',
+                      'total_inspec', 'total_defect', 'record_count', 'trend']
+        rank_df = pd.DataFrame([
+            {c: r.get(c) for c in _rank_cols} for r in ranking
+        ]).rename(columns={
             'rank': '순위', 'factory': '공장', 'region_label': '지역',
-            'avg_rate': '평균불량률(%)', 'total_inspec': '검사수량', 'total_defect': '불량수량',
+            'avg_rate': '1차불량률(%)', 'final_rate': '최종불량률(%)',
+            'correction_rate': '수정합격률(%)',
+            'total_inspec': '검사수량', 'total_defect': '불량수량',
             'record_count': '건수', 'trend': '추이',
         })
         rank_df['추이'] = rank_df['추이'].map(trend_mark)
@@ -840,13 +858,26 @@ def render_factory_tab():
     panel_title("🗺️ 지역별 불량률 히트맵")
     if heatmap:
         heat_df = pd.DataFrame(heatmap).rename(columns={
-            'region1': '지역', 'avg_rate': '평균불량률(%)', 'total_inspec': '검사수량',
-            'total_defect': '불량수량', 'factory_count': '공장수',
+            'region1': '지역', 'avg_rate': '1차불량률(%)', 'final_rate': '최종불량률(%)',
+            'correction_rate': '수정합격률(%)', 'total_inspec': '검사수량',
+            'total_defect': '불량수량', 'total_final': '최종불량수량', 'factory_count': '공장수',
         })
-        fig = px.bar(heat_df, x='지역', y='평균불량률(%)', color='평균불량률(%)',
-                      color_continuous_scale='RdYlGn_r', text='평균불량률(%)')
-        st.plotly_chart(fig, use_container_width=True)
-        st.dataframe(heat_df, use_container_width=True)
+        _h_col1, _h_col2 = st.columns(2)
+        with _h_col1:
+            fig_h1 = px.bar(heat_df, x='지역', y='1차불량률(%)', color='1차불량률(%)',
+                            color_continuous_scale='RdYlGn_r', text='1차불량률(%)',
+                            title='지역별 1차 불량률')
+            fig_h1.update_layout(height=320, margin=dict(l=0,r=0,t=40,b=0))
+            st.plotly_chart(fig_h1, use_container_width=True)
+        with _h_col2:
+            fig_h2 = px.bar(heat_df, x='지역', y='최종불량률(%)', color='최종불량률(%)',
+                            color_continuous_scale='RdYlGn_r', text='최종불량률(%)',
+                            title='지역별 최종 불량률')
+            fig_h2.update_layout(height=320, margin=dict(l=0,r=0,t=40,b=0))
+            st.plotly_chart(fig_h2, use_container_width=True)
+        _show_cols = [c for c in ['지역','검사수량','불량수량','1차불량률(%)','최종불량률(%)','수정합격률(%)','공장수']
+                      if c in heat_df.columns]
+        st.dataframe(heat_df[_show_cols], use_container_width=True)
     else:
         st.info("지역별 데이터가 없습니다.")
 
@@ -905,16 +936,42 @@ def render_factory_tab():
         if selected_factory:
             detail = calc_factory_detail(raw_rows, cache, selected_factory)
             if detail:
-                d1, d2, d3 = st.columns(3)
-                d1.metric("검사수량 합계", f"{detail['total_inspec']:,}")
-                d2.metric("불량수량 합계", f"{detail['total_defect']:,}")
-                d3.metric("데이터 건수", f"{detail['record_count']:,}")
+                # ── KPI 지표 ──────────────────────────────────────
+                _k1, _k2, _k3, _k4, _k5, _k6 = st.columns(6)
+                _k1.metric("검사수량", f"{detail['total_inspec']:,}")
+                _k2.metric("1차불량수량", f"{detail['total_defect']:,}")
+                _k3.metric("1차불량률",
+                           f"{detail.get('avg_rate') or 0:.2f}%")
+                _k4.metric("최종불량수량", f"{detail.get('total_final_defect', 0):,}")
+                _k5.metric("최종불량률",
+                           f"{detail.get('final_rate') or 0:.2f}%")
+                _k6.metric("수정합격률",
+                           f"{detail.get('correction_rate') or 0:.1f}%")
 
+                # ── 월별 추이 차트 ────────────────────────────────
                 if detail['monthly']:
                     m_df = pd.DataFrame(detail['monthly'])
-                    fig2 = px.line(m_df, x='month', y='rate', markers=True,
-                                    title="월별 불량률 추이(%)")
-                    st.plotly_chart(fig2, use_container_width=True)
+                    _has_final = ('final_rate' in m_df.columns and
+                                  m_df['final_rate'].fillna(0).sum() > 0)
+                    if _has_final:
+                        _fig2 = go.Figure()
+                        _fig2.add_trace(go.Scatter(
+                            x=m_df['month'], y=m_df['rate'], name='1차 불량률',
+                            mode='lines+markers', line=dict(color='#2563A8', width=2.5),
+                            marker=dict(size=6)
+                        ))
+                        _fig2.add_trace(go.Scatter(
+                            x=m_df['month'], y=m_df['final_rate'], name='최종 불량률',
+                            mode='lines+markers', line=dict(color='#D30005', width=2.5),
+                            marker=dict(size=6)
+                        ))
+                        _fig2.update_layout(title="월별 불량률 추이 (1차 vs 최종)",
+                                            height=320, legend=dict(orientation='h', y=1.12))
+                        st.plotly_chart(_fig2, use_container_width=True)
+                    else:
+                        fig2 = px.line(m_df, x='month', y='rate', markers=True,
+                                       title="월별 1차 불량률 추이(%)")
+                        st.plotly_chart(fig2, use_container_width=True)
 
                 if detail['top5_defects']:
                     st.markdown("**불량 유형 TOP7**")
