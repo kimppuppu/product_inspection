@@ -692,10 +692,10 @@ def _ct(cell, text, bold=False, sz=9.5, color=None,
     _run(p, str(text), sz=sz, bold=bold, color=color)
 
 
-def _sec_title(doc, text):
+def _sec_title(doc, text, note=None):
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(10)
-    p.paragraph_format.space_after  = Pt(4)
+    p.paragraph_format.space_after  = Pt(0 if note else 4)
     p.paragraph_format.keep_with_next = True
     r = p.add_run(f"■ {text}")
     r.font.name = WORD_FONT; r.font.size = Pt(13); r.font.bold = True
@@ -706,6 +706,13 @@ def _sec_title(doc, text):
     bot = OxmlElement('w:bottom'); bot.set(qn('w:val'), 'single')
     bot.set(qn('w:sz'), '6'); bot.set(qn('w:space'), '1')
     bot.set(qn('w:color'), '1A3557'); pBdr.append(bot); pPr.append(pBdr)
+    if note:
+        pn = doc.add_paragraph()
+        pn.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        pn.paragraph_format.space_before = Pt(1)
+        pn.paragraph_format.space_after  = Pt(4)
+        pn.paragraph_format.keep_with_next = True
+        _run(pn, note, sz=10, color=RGBColor(0x88, 0x88, 0x88))
 
 
 def _img_para(doc, img_bytes, width_cm=15):
@@ -978,8 +985,8 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
             _img_para(doc, _chart_client(data["by_client"], avg), CW_HALF)
 
     # ── 섹션4~8: 1차 불량률 기준 ─────────────────────────────────
-    _sfx = "  ※ 1차 불량률 기준" if IS_ANY_DUAL else ""
-    _sec_title(doc, f"4. 품목 유형별 현황 (의류 / 잡화 / 신발){_sfx}")
+    _note = "※ 1차 불량률 기준" if IS_ANY_DUAL else None
+    _sec_title(doc, "4. 품목 유형별 현황 (의류 / 잡화 / 신발)", note=_note)
     rows4t = []
     for d in data.get("by_item_type", []):
         rows4t.append([
@@ -998,7 +1005,7 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
             _img_para(doc, img, CW_HALF + 1)
 
     # ── 섹션5: 전체 세부 불량 유형 ───────────────────────────────
-    _sec_title(doc, f"5. 전체 세부 불량 유형  ※ 상위 {TOP_N}개 + 그외{_sfx}")
+    _sec_title(doc, f"5. 전체 세부 불량 유형  ※ 상위 {TOP_N}개 + 그외", note=_note)
     cum = 0
     rows3 = []
     for d in data["defect_types"]:
@@ -1015,7 +1022,7 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
         _img_para(doc, _chart_defect(data["defect_types"]), CW_FULL)
 
     # ── 섹션6: 업체별 세부 불량 유형 ─────────────────────────────
-    _sec_title(doc, f"6. 업체별 세부 불량 유형{_sfx}")
+    _sec_title(doc, "6. 업체별 세부 불량 유형", note=_note)
     type_cols = data["top_type_names"]
     rows4 = []
     for client in [d["name"] for d in data["by_client"]]:
@@ -1027,7 +1034,7 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
     _make_table(doc, ["업체명"] + type_cols, rows4)
 
     # ── 섹션7: 공장별 불량률 ─────────────────────────────────────
-    _sec_title(doc, f"7. 공장별 불량률{_sfx}")
+    _sec_title(doc, "7. 공장별 불량률", note=_note)
     rows5 = []
     for d in data["by_factory"]:
         rows5.append([
@@ -1043,7 +1050,7 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
         _img_para(doc, _chart_factory(data["by_factory"], avg), CW_FULL)
 
     # ── 섹션8: 공장별 세부 불량 유형 ─────────────────────────────
-    _sec_title(doc, f"8. 공장별 세부 불량 유형{_sfx}")
+    _sec_title(doc, "8. 공장별 세부 불량 유형", note=_note)
     rows6 = []
     for factory in [d["name"] for d in data["by_factory"]]:
         dmap = data["factory_defect_table"].get(factory, {})
