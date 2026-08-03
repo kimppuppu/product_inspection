@@ -344,7 +344,9 @@ def get_region_label(row: dict) -> str:
             return '중국 연대'
         if '대련' in r2l or 'dalian' in r2l or 'da lian' in r2l:
             return '중국 대련'
-        # region2가 없으면 region1만으로 '중국' 반환 (세분화 불가)
+        # region2 값이 있으면 그대로 "중국 {region2}"로 표시
+        if r2:
+            return f'중국 {r2}'
         return '중국'
 
     # 기타 국가
