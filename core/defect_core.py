@@ -292,7 +292,7 @@ def load_raw(file_paths, log_fn=None):
 def get_region_label(row: dict) -> str:
     """
     접수번호 앞자리 + 기존 지역 정보로 세분화 지역명 반환
-    S → 중국 상해 / Q → 중국 청도 / Y → 중국 연태
+    S → 중국 상해 / Y → 중국 연대 / Q → 중국 청도 / L → 중국 대련
     A → 인도네시아
     V → 베트남 호치민 or 베트남 하노이 (지역2 기준)
     H → 한국 or 미얀마 (지역1 기준)
@@ -308,10 +308,12 @@ def get_region_label(row: dict) -> str:
     # ① 접수번호 앞글자 우선 판별
     if prefix == 'S':
         return '중국 상해'
+    elif prefix == 'Y':
+        return '중국 연대'
     elif prefix == 'Q':
         return '중국 청도'
-    elif prefix == 'Y':
-        return '중국 연태'
+    elif prefix == 'L':
+        return '중국 대련'
     elif prefix == 'A':
         return '인도네시아'
     elif prefix == 'V':
@@ -338,8 +340,10 @@ def get_region_label(row: dict) -> str:
             return '중국 청도'
         if '상해' in r2l or 'shanghai' in r2l or 'shang hai' in r2l:
             return '중국 상해'
-        if '연태' in r2l or '연대' in r2l or 'yantai' in r2l or 'yan tai' in r2l:
-            return '중국 연태'
+        if '연대' in r2l or '연태' in r2l or 'yantai' in r2l or 'yan tai' in r2l:
+            return '중국 연대'
+        if '대련' in r2l or 'dalian' in r2l or 'da lian' in r2l:
+            return '중국 대련'
         # region2가 없으면 region1만으로 '중국' 반환 (세분화 불가)
         return '중국'
 
