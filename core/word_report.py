@@ -127,7 +127,8 @@ def aggregate(raw_rows: list, cache: dict) -> dict:
     # 불량상세 시트는 불량유형별로 행이 분리되어 검사수량/최종불합격/2차검사가 반복됨.
     # report_no 단위로 한 번만 합산해야 정확한 불량률이 계산됨.
     _seen_rno: dict = {}  # {(group_key, report_no): True}
-    def _add_inspec(seen_key, r, inspec_d, final_d, second_d, group):
+    def _add_inspec(seen_key, r, inspec_d, final_d, second_d, group, defect_d=None):
+        """report_no 기준 dedup — inspec/final/second/qty_1st 각 1회만 합산"""
         rno = str(r.get('report_no') or '').strip() or f'__row_{id(r)}'
         key = (group, rno)
         if key not in seen_key:
@@ -135,14 +136,17 @@ def aggregate(raw_rows: list, cache: dict) -> dict:
             inspec_d[group] += _safe_int(r.get('inspec'))
             final_d[group]  += _safe_int(r.get('최종불합격수량'))
             second_d[group] += _safe_int(r.get('2차검사수량'))
+            if defect_d is not None:
+                defect_d[group] += _safe_int(r.get('qty_1st'))
 
     # ── 1. 전체 요약 ───────────────────────────────
     _seen1: dict = {}
-    _tot_inspec = defaultdict(int); _tot_final = defaultdict(int); _tot_second = defaultdict(int)
-    total_defect = sum(_safe_int(r.get('qty_total')) for r in raw_rows)
+    _tot_inspec = defaultdict(int); _tot_final = defaultdict(int)
+    _tot_second = defaultdict(int); _tot_defect = defaultdict(int)
     for r in raw_rows:
-        _add_inspec(_seen1, r, _tot_inspec, _tot_final, _tot_second, 'all')
+        _add_inspec(_seen1, r, _tot_inspec, _tot_final, _tot_second, 'all', _tot_defect)
     total_inspec        = _tot_inspec['all']
+    total_defect        = _tot_defect['all']
     total_final_defect  = _tot_final['all']
     total_second_inspec = _tot_second['all']
     total_rate       = _rate(total_defect, total_inspec)
@@ -160,8 +164,7 @@ def aggregate(raw_rows: list, cache: dict) -> dict:
         ym = (r.get('date') or '')[:7]
         if not ym:
             continue
-        _add_inspec(_seen2, r, monthly_inspec, monthly_final, monthly_second, ym)
-        monthly_defect[ym] += _safe_int(r.get('qty_total'))
+        _add_inspec(_seen2, r, monthly_inspec, monthly_final, monthly_second, ym, monthly_defect)
     monthly = sorted([
         {"month": ym, "inspec": monthly_inspec[ym],
          "defect": monthly_defect[ym],
@@ -182,8 +185,7 @@ def aggregate(raw_rows: list, cache: dict) -> dict:
     client_second  = defaultdict(int)
     for r in raw_rows:
         c = str(r.get('client') or r.get('buyer') or '미확인').strip()
-        _add_inspec(_seen3, r, client_inspec, client_final, client_second, c)
-        client_defect[c] += _safe_int(r.get('qty_total'))
+        _add_inspec(_seen3, r, client_inspec, client_final, client_second, c, client_defect)
     by_client = sorted([
         {"name": c, "inspec": client_inspec[c],
          "defect": client_defect[c],
@@ -204,8 +206,7 @@ def aggregate(raw_rows: list, cache: dict) -> dict:
     country_second = defaultdict(int)
     for r in raw_rows:
         country = str(r.get('region1') or '미확인').strip() or '미확인'
-        _add_inspec(_seen4, r, country_inspec, country_final, country_second, country)
-        country_defect[country] += _safe_int(r.get('qty_total'))
+        _add_inspec(_seen4, r, country_inspec, country_final, country_second, country, country_defect)
     by_country = sorted([
         {"name": c, "inspec": country_inspec[c],
          "defect": country_defect[c],
@@ -256,8 +257,7 @@ def aggregate(raw_rows: list, cache: dict) -> dict:
     factory_defect = defaultdict(int)
     for r in raw_rows:
         f = str(r.get('factory') or '미확인').strip()
-        _add_inspec(_seen6, r, factory_inspec, _fac_final, _fac_second, f)
-        factory_defect[f] += _safe_int(r.get('qty_total'))
+        _add_inspec(_seen6, r, factory_inspec, _fac_final, _fac_second, f, factory_defect)
     by_factory = sorted([
         {"name": f, "inspec": factory_inspec[f],
          "defect": factory_defect[f],
@@ -299,8 +299,7 @@ def aggregate(raw_rows: list, cache: dict) -> dict:
     type_defect = defaultdict(int)
     for r in raw_rows:
         ptype = r.get('product_type') or _classify(r.get('item', ''))
-        _add_inspec(_seen8, r, type_inspec, _typ_final, _typ_second, ptype)
-        type_defect[ptype] += _safe_int(r.get('qty_total'))
+        _add_inspec(_seen8, r, type_inspec, _typ_final, _typ_second, ptype, type_defect)
     by_item_type = [
         {"name": t, "inspec": type_inspec[t],
          "defect": type_defect[t],

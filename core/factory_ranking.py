@@ -70,9 +70,9 @@ def calc_factory_ranking(raw_rows: list[dict], cache: dict,
         if dedup_key not in _seen_fr:
             _seen_fr.add(dedup_key)
             factory_monthly[f][ym]['inspec']        += r.get('inspec', 0) or 0
+            factory_monthly[f][ym]['defect']        += r.get('qty_1st', 0) or 0
             factory_monthly[f][ym]['final_defect']  += r.get('최종불합격수량', 0) or 0
             factory_monthly[f][ym]['second_inspec'] += r.get('2차검사수량', 0) or 0
-        factory_monthly[f][ym]['defect'] += r.get('qty_total', 0) or 0
         factory_monthly[f][ym]['count']  += 1
         if f not in factory_info:
             factory_info[f] = {
@@ -172,9 +172,9 @@ def calc_region_heatmap(raw_rows: list[dict],
         if dedup_key not in _seen_rh:
             _seen_rh.add(dedup_key)
             region[reg]['inspec']        += r.get('inspec', 0) or 0
+            region[reg]['defect']        += r.get('qty_1st', 0) or 0
             region[reg]['final_defect']  += r.get('최종불합격수량', 0) or 0
             region[reg]['second_inspec'] += r.get('2차검사수량', 0) or 0
-        region[reg]['defect'] += r.get('qty_total', 0) or 0
         f = r.get('factory', '')
         if f: region[reg]['factories'].add(f)
 
@@ -216,9 +216,9 @@ def calc_factory_detail(raw_rows: list[dict], cache: dict,
         if dedup_key not in _seen_fd:
             _seen_fd.add(dedup_key)
             monthly[ym]['inspec']        += r.get('inspec', 0) or 0
+            monthly[ym]['defect']        += r.get('qty_1st', 0) or 0
             monthly[ym]['final_defect']  += r.get('최종불합격수량', 0) or 0
             monthly[ym]['second_inspec'] += r.get('2차검사수량', 0) or 0
-        monthly[ym]['defect'] += r.get('qty_total', 0) or 0
 
     monthly_list = []
     for m, d in sorted(monthly.items()):
@@ -251,13 +251,13 @@ def calc_factory_detail(raw_rows: list[dict], cache: dict,
 
     # report_no 기준 중복 제거 (inspec/최종/2차는 건당 1회만 합산)
     _seen_tot: set = set()
-    _total_inspec = 0; _total_final = 0; _total_second = 0
-    _total_defect = sum(r.get('qty_total', 0) or 0 for r in rows)
+    _total_inspec = 0; _total_final = 0; _total_second = 0; _total_defect = 0
     for r in rows:
         rno = str(r.get('report_no') or '').strip() or f'__row_{id(r)}'
         if rno not in _seen_tot:
             _seen_tot.add(rno)
             _total_inspec += r.get('inspec', 0) or 0
+            _total_defect += r.get('qty_1st', 0) or 0
             _total_final  += r.get('최종불합격수량', 0) or 0
             _total_second += r.get('2차검사수량', 0) or 0
 

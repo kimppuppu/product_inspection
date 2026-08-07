@@ -168,11 +168,16 @@ def _build_rec_lookup(wb) -> dict:
     except ValueError:
         return {}
 
-    # 1차불합격수량: 없어도 동작하도록 try
+    # 1차불합격수량, INSPEC. Q'TY: 없어도 동작하도록 try
     try:
         ci_1st = header.index('1차불합격수량')
     except ValueError:
         ci_1st = None
+
+    try:
+        ci_inspec = header.index("INSPEC. Q'TY")
+    except ValueError:
+        ci_inspec = None
 
     lookup = {}
     for row in ws_raw.iter_rows(min_row=header_ri + 1, values_only=True):
@@ -182,18 +187,20 @@ def _build_rec_lookup(wb) -> dict:
         if not rno:
             continue
 
-        final  = _to_int(row[ci_final] if len(row) > ci_final else None)
-        second = _to_int(row[ci_sec]   if len(row) > ci_sec   else None)
-        first  = _to_int(row[ci_1st]   if ci_1st is not None and len(row) > ci_1st else None)
+        final  = _to_int(row[ci_final]  if len(row) > ci_final  else None)
+        second = _to_int(row[ci_sec]    if len(row) > ci_sec    else None)
+        first  = _to_int(row[ci_1st]    if ci_1st    is not None and len(row) > ci_1st    else None)
+        inspec = _to_int(row[ci_inspec] if ci_inspec is not None and len(row) > ci_inspec else None)
 
         # 2차검사수량이 없으면 1차불합격수량으로 대체
-        # (재검사 대상 = 1차 불합격품이므로 사실상 동일)
         if not second and first:
             second = first
 
         lookup[str(rno).strip()] = {
             '최종불합격수량': final,
             '2차검사수량':    second,
+            '1차불합격수량': first,
+            'inspec':        inspec,
         }
     return lookup
 
@@ -257,10 +264,12 @@ def load_raw(file_paths, log_fn=None):
             elif date_val:
                 date_val = str(date_val)
 
-            # ① 원본에서 report_no 기준으로 최종불합격수량·2차검사수량 조회
+            # ① 원본에서 report_no 기준으로 inspec·1차불합격·최종불합격·2차검사 조회
             # (없으면 ② 불량상세 컬럼 값 사용 → 둘 다 없으면 0)
             rno_str = str(gv(row, 'report_no') or '').strip()
             rec_data = rec_lookup.get(rno_str, {})
+            inspec_val    = rec_data.get('inspec')         if rec_data else None
+            qty_1st_val   = rec_data.get('1차불합격수량') if rec_data else None
             final_defect  = rec_data.get('최종불합격수량') if rec_data else _to_int(gv(row, 'final_defect'))
             second_inspec = rec_data.get('2차검사수량')    if rec_data else _to_int(gv(row, 'second_inspec'))
 
@@ -272,11 +281,15 @@ def load_raw(file_paths, log_fn=None):
                 'region1': _norm_region(gv(row, 'region1')),
                 'region2': str(gv(row, 'region2') or '').strip(),
                 'style': gv(row, 'style'), 'item': gv(row, 'item'),
-                'inspec': _to_int(gv(row, 'inspec')),
+                # inspec: 원본 시트 우선, 없으면 불량상세 값
+                'inspec':    inspec_val if inspec_val else _to_int(gv(row, 'inspec')),
                 'defect_raw': ds,
-                'qty_mid': _to_int(gv(row, 'qty_mid')),
+                'qty_mid':   _to_int(gv(row, 'qty_mid')),
                 'qty_light': _to_int(gv(row, 'qty_light')),
+                # qty_total: 불량유형별 수량 (TOP7 분석용) — 원본에서 가져오지 않음
                 'qty_total': _to_int(gv(row, 'qty_total')),
+                # qty_1st: 원본 1차불합격수량 (불량률 계산용)
+                'qty_1st':        qty_1st_val   or 0,
                 '최종불합격수량': final_defect  or 0,
                 '2차검사수량':    second_inspec or 0,
             })
