@@ -168,14 +168,15 @@ def _build_rec_lookup(wb) -> dict:
     except ValueError:
         return {}
 
-    # 1차불합격수량, INSPEC. Q'TY: 없어도 동작하도록 try
+    # 1차불합격수량, 1차검사수량: 없어도 동작하도록 try
+    # 분모는 1차검사수량 사용 (INSPEC. Q'TY 아님)
     try:
         ci_1st = header.index('1차불합격수량')
     except ValueError:
         ci_1st = None
 
     try:
-        ci_inspec = header.index("INSPEC. Q'TY")
+        ci_inspec = header.index('1차검사수량')
     except ValueError:
         ci_inspec = None
 
