@@ -123,18 +123,35 @@ def aggregate(raw_rows: list, cache: dict) -> dict:
     else:
         period = datetime.now().strftime('%Y-%m') + " 기준"
 
+    # ── report_no 기준 중복 제거 사전 구축 ────────────────────────
+    # 불량상세 시트는 불량유형별로 행이 분리되어 검사수량/최종불합격/2차검사가 반복됨.
+    # report_no 단위로 한 번만 합산해야 정확한 불량률이 계산됨.
+    _seen_rno: dict = {}  # {(group_key, report_no): True}
+    def _add_inspec(seen_key, r, inspec_d, final_d, second_d, group):
+        rno = str(r.get('report_no') or '').strip() or f'__row_{id(r)}'
+        key = (group, rno)
+        if key not in seen_key:
+            seen_key[key] = True
+            inspec_d[group] += _safe_int(r.get('inspec'))
+            final_d[group]  += _safe_int(r.get('최종불합격수량'))
+            second_d[group] += _safe_int(r.get('2차검사수량'))
+
     # ── 1. 전체 요약 ───────────────────────────────
-    total_inspec  = sum(_safe_int(r.get('inspec')) for r in raw_rows)
-    total_defect  = sum(_safe_int(r.get('qty_total')) for r in raw_rows)
-    total_rate    = _rate(total_defect, total_inspec)
-    # 1차/최종 구분 필드
-    total_final_defect  = sum(_safe_int(r.get('최종불합격수량')) for r in raw_rows)
-    total_second_inspec = sum(_safe_int(r.get('2차검사수량'))    for r in raw_rows)
-    total_final_rate    = _rate(total_final_defect, total_inspec)
-    total_correction    = (_rate(total_second_inspec - total_final_defect, total_second_inspec)
-                           if total_second_inspec > 0 else 0.0)
+    _seen1: dict = {}
+    _tot_inspec = defaultdict(int); _tot_final = defaultdict(int); _tot_second = defaultdict(int)
+    total_defect = sum(_safe_int(r.get('qty_total')) for r in raw_rows)
+    for r in raw_rows:
+        _add_inspec(_seen1, r, _tot_inspec, _tot_final, _tot_second, 'all')
+    total_inspec        = _tot_inspec['all']
+    total_final_defect  = _tot_final['all']
+    total_second_inspec = _tot_second['all']
+    total_rate       = _rate(total_defect, total_inspec)
+    total_final_rate = _rate(total_final_defect, total_inspec)
+    total_correction = (_rate(total_second_inspec - total_final_defect, total_second_inspec)
+                        if total_second_inspec > 0 else 0.0)
 
     # ── 2. 월별 ────────────────────────────────────
+    _seen2: dict = {}
     monthly_inspec  = defaultdict(int)
     monthly_defect  = defaultdict(int)
     monthly_final   = defaultdict(int)
@@ -143,10 +160,8 @@ def aggregate(raw_rows: list, cache: dict) -> dict:
         ym = (r.get('date') or '')[:7]
         if not ym:
             continue
-        monthly_inspec[ym] += _safe_int(r.get('inspec'))
+        _add_inspec(_seen2, r, monthly_inspec, monthly_final, monthly_second, ym)
         monthly_defect[ym] += _safe_int(r.get('qty_total'))
-        monthly_final[ym]  += _safe_int(r.get('최종불합격수량'))
-        monthly_second[ym] += _safe_int(r.get('2차검사수량'))
     monthly = sorted([
         {"month": ym, "inspec": monthly_inspec[ym],
          "defect": monthly_defect[ym],
@@ -160,16 +175,15 @@ def aggregate(raw_rows: list, cache: dict) -> dict:
     ], key=lambda x: x["month"])
 
     # ── 3. 업체별 ──────────────────────────────────
+    _seen3: dict = {}
     client_inspec  = defaultdict(int)
     client_defect  = defaultdict(int)
     client_final   = defaultdict(int)
     client_second  = defaultdict(int)
     for r in raw_rows:
         c = str(r.get('client') or r.get('buyer') or '미확인').strip()
-        client_inspec[c] += _safe_int(r.get('inspec'))
+        _add_inspec(_seen3, r, client_inspec, client_final, client_second, c)
         client_defect[c] += _safe_int(r.get('qty_total'))
-        client_final[c]  += _safe_int(r.get('최종불합격수량'))
-        client_second[c] += _safe_int(r.get('2차검사수량'))
     by_client = sorted([
         {"name": c, "inspec": client_inspec[c],
          "defect": client_defect[c],
@@ -183,18 +197,15 @@ def aggregate(raw_rows: list, cache: dict) -> dict:
     ], key=lambda x: x["rate"], reverse=True)
 
     # ── 3-2. 국가별 불량률 ─────────────────────────
+    _seen4: dict = {}
     country_inspec = defaultdict(int)
     country_defect = defaultdict(int)
     country_final  = defaultdict(int)
     country_second = defaultdict(int)
     for r in raw_rows:
-        country = str(r.get('region1') or '미확인').strip()
-        if not country:
-            country = '미확인'
-        country_inspec[country] += _safe_int(r.get('inspec'))
+        country = str(r.get('region1') or '미확인').strip() or '미확인'
+        _add_inspec(_seen4, r, country_inspec, country_final, country_second, country)
         country_defect[country] += _safe_int(r.get('qty_total'))
-        country_final[country]  += _safe_int(r.get('최종불합격수량'))
-        country_second[country] += _safe_int(r.get('2차검사수량'))
     by_country = sorted([
         {"name": c, "inspec": country_inspec[c],
          "defect": country_defect[c],
@@ -239,11 +250,13 @@ def aggregate(raw_rows: list, cache: dict) -> dict:
     }
 
     # ── 6. 공장별 불량률 ───────────────────────────
+    _seen6: dict = {}
+    _fac_final = defaultdict(int); _fac_second = defaultdict(int)
     factory_inspec = defaultdict(int)
     factory_defect = defaultdict(int)
     for r in raw_rows:
         f = str(r.get('factory') or '미확인').strip()
-        factory_inspec[f] += _safe_int(r.get('inspec'))
+        _add_inspec(_seen6, r, factory_inspec, _fac_final, _fac_second, f)
         factory_defect[f] += _safe_int(r.get('qty_total'))
     by_factory = sorted([
         {"name": f, "inspec": factory_inspec[f],
@@ -280,11 +293,13 @@ def aggregate(raw_rows: list, cache: dict) -> dict:
         for kw in _잡화_KW:
             if kw in s: return '잡화'
         return '의류'
+    _seen8: dict = {}
+    _typ_final = defaultdict(int); _typ_second = defaultdict(int)
     type_inspec = defaultdict(int)
     type_defect = defaultdict(int)
     for r in raw_rows:
         ptype = r.get('product_type') or _classify(r.get('item', ''))
-        type_inspec[ptype] += _safe_int(r.get('inspec'))
+        _add_inspec(_seen8, r, type_inspec, _typ_final, _typ_second, ptype)
         type_defect[ptype] += _safe_int(r.get('qty_total'))
     by_item_type = [
         {"name": t, "inspec": type_inspec[t],
@@ -1221,7 +1236,7 @@ def generate_factory_word(detail: dict) -> bytes:
     def _rate_color(r, is_corr=False):
         if is_corr:
             return C_GREEN if r >= 80 else (RGBColor(0xE6,0x7E,0x22) if r >= 60 else C_RED)
-        return C_GREEN if r < 1.5 else (RGBColor(0xE6,0x7E,0x22) if r < 3 else C_RED)
+        return C_GREEN if r < 5 else (RGBColor(0xE6,0x7E,0x22) if r < 10 else C_RED)
 
     if has_dual:
         kpi_hdrs = ["1차 불량률", "최종 불량률", "수정 합격률", "1차 불량수량", "분석 기간"]
@@ -1301,7 +1316,7 @@ def generate_factory_word(detail: dict) -> bytes:
                 rate_str, eval_str = "—", "—"
             else:
                 rate_str = f"{rate:.2f}%"
-                eval_str = "우수" if rate < 1.0 else ("양호" if rate < 2.0 else ("주의" if rate < 3.5 else "불량"))
+                eval_str = "우수" if rate < 5.0 else ("양호" if rate < 7.0 else ("주의" if rate < 10.0 else "불량"))
             m_rows.append([
                 (m["month"], False, None, WD_ALIGN_PARAGRAPH.CENTER),
                 (f"{m.get('inspec',0):,}", False, None, WD_ALIGN_PARAGRAPH.CENTER),

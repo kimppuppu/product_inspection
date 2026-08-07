@@ -290,8 +290,8 @@ def generate_factory_pdf(detail: dict) -> bytes:
     story.append(Spacer(1, 12))
 
     # KPI 카드 (1차불량률 / 최종불량률 / 수정합격률 / 총불량수량 / 분석기간)
-    rate_color  = GREEN if avg_rate  < 1.5 else (colors.orange if avg_rate  < 3 else RED)
-    final_color = GREEN if final_rate < 1.5 else (colors.orange if final_rate < 3 else RED)
+    rate_color  = GREEN if avg_rate  < 5 else (colors.orange if avg_rate  < 10 else RED)
+    final_color = GREEN if final_rate < 5 else (colors.orange if final_rate < 10 else RED)
     corr_color  = GREEN if corr_rate >= 80 else (colors.orange if corr_rate >= 60 else RED)
     if has_dual:
         kpi_data = [[

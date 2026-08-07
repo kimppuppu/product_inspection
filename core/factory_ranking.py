@@ -59,16 +59,21 @@ def calc_factory_ranking(raw_rows: list[dict], cache: dict,
     ))
     factory_info: dict[str, dict] = {}
 
+    _seen_fr: set = set()
     for r in rows:
         f = r.get('factory') or '(미입력)'
         if not f or f == '(미입력)':
             continue
         ym = _parse_date(r.get('date')) or 'unknown'
-        factory_monthly[f][ym]['inspec']       += r.get('inspec', 0) or 0
-        factory_monthly[f][ym]['defect']       += r.get('qty_total', 0) or 0
-        factory_monthly[f][ym]['final_defect'] += r.get('최종불합격수량', 0) or 0
-        factory_monthly[f][ym]['second_inspec']+= r.get('2차검사수량', 0) or 0
-        factory_monthly[f][ym]['count']        += 1
+        rno = str(r.get('report_no') or '').strip() or f'__row_{id(r)}'
+        dedup_key = (f, ym, rno)
+        if dedup_key not in _seen_fr:
+            _seen_fr.add(dedup_key)
+            factory_monthly[f][ym]['inspec']        += r.get('inspec', 0) or 0
+            factory_monthly[f][ym]['final_defect']  += r.get('최종불합격수량', 0) or 0
+            factory_monthly[f][ym]['second_inspec'] += r.get('2차검사수량', 0) or 0
+        factory_monthly[f][ym]['defect'] += r.get('qty_total', 0) or 0
+        factory_monthly[f][ym]['count']  += 1
         if f not in factory_info:
             factory_info[f] = {
                 'region1':       r.get('region1', ''),
@@ -159,12 +164,17 @@ def calc_region_heatmap(raw_rows: list[dict],
         lambda: {'inspec': 0, 'defect': 0, 'final_defect': 0, 'second_inspec': 0, 'factories': set()}
     )
 
+    _seen_rh: set = set()
     for r in rows:
         reg = r.get('region_label') or r.get('region1') or '(미입력)'
-        region[reg]['inspec']        += r.get('inspec', 0) or 0
-        region[reg]['defect']        += r.get('qty_total', 0) or 0
-        region[reg]['final_defect']  += r.get('최종불합격수량', 0) or 0
-        region[reg]['second_inspec'] += r.get('2차검사수량', 0) or 0
+        rno = str(r.get('report_no') or '').strip() or f'__row_{id(r)}'
+        dedup_key = (reg, rno)
+        if dedup_key not in _seen_rh:
+            _seen_rh.add(dedup_key)
+            region[reg]['inspec']        += r.get('inspec', 0) or 0
+            region[reg]['final_defect']  += r.get('최종불합격수량', 0) or 0
+            region[reg]['second_inspec'] += r.get('2차검사수량', 0) or 0
+        region[reg]['defect'] += r.get('qty_total', 0) or 0
         f = r.get('factory', '')
         if f: region[reg]['factories'].add(f)
 
@@ -198,12 +208,17 @@ def calc_factory_detail(raw_rows: list[dict], cache: dict,
     monthly: dict[str, dict] = defaultdict(
         lambda: {'inspec': 0, 'defect': 0, 'final_defect': 0, 'second_inspec': 0}
     )
+    _seen_fd: set = set()
     for r in rows:
         ym = _parse_date(r.get('date')) or 'unknown'
-        monthly[ym]['inspec']        += r.get('inspec', 0) or 0
-        monthly[ym]['defect']        += r.get('qty_total', 0) or 0
-        monthly[ym]['final_defect']  += r.get('최종불합격수량', 0) or 0
-        monthly[ym]['second_inspec'] += r.get('2차검사수량', 0) or 0
+        rno = str(r.get('report_no') or '').strip() or f'__row_{id(r)}'
+        dedup_key = (ym, rno)
+        if dedup_key not in _seen_fd:
+            _seen_fd.add(dedup_key)
+            monthly[ym]['inspec']        += r.get('inspec', 0) or 0
+            monthly[ym]['final_defect']  += r.get('최종불합격수량', 0) or 0
+            monthly[ym]['second_inspec'] += r.get('2차검사수량', 0) or 0
+        monthly[ym]['defect'] += r.get('qty_total', 0) or 0
 
     monthly_list = []
     for m, d in sorted(monthly.items()):
