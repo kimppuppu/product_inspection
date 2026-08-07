@@ -868,18 +868,30 @@ def render_factory_tab():
             'correction_rate': '수정합격률(%)', 'total_inspec': '검사수량',
             'total_defect': '불량수량', 'total_final': '최종불량수량', 'factory_count': '공장수',
         })
+        # 보고서와 동일한 5%/10% 고정 임계값으로 색상 구분
+        def _rate_grade(v):
+            if v is None or pd.isna(v): return '(없음)'
+            return '우수 (<5%)' if v < 5 else ('주의 (5~10%)' if v < 10 else '불량 (≥10%)')
+        _grade_colors = {'우수 (<5%)': '#27AE60', '주의 (5~10%)': '#E67E22', '불량 (≥10%)': '#C0392B', '(없음)': '#AAAAAA'}
+        _grade_order  = ['우수 (<5%)', '주의 (5~10%)', '불량 (≥10%)', '(없음)']
+        heat_df['등급_1차'] = heat_df['1차불량률(%)'].apply(_rate_grade)
+        heat_df['등급_최종'] = heat_df['최종불량률(%)'].apply(_rate_grade)
         _h_col1, _h_col2 = st.columns(2)
         with _h_col1:
-            fig_h1 = px.bar(heat_df, x='지역', y='1차불량률(%)', color='1차불량률(%)',
-                            color_continuous_scale='RdYlGn_r', text='1차불량률(%)',
-                            title='지역별 1차 불량률')
-            fig_h1.update_layout(height=320, margin=dict(l=0,r=0,t=40,b=0))
+            fig_h1 = px.bar(heat_df, x='지역', y='1차불량률(%)', color='등급_1차',
+                            color_discrete_map=_grade_colors,
+                            category_orders={'등급_1차': _grade_order},
+                            text='1차불량률(%)', title='지역별 1차 불량률')
+            fig_h1.update_layout(height=320, margin=dict(l=0,r=0,t=40,b=0),
+                                 legend_title_text='등급')
             st.plotly_chart(fig_h1, use_container_width=True)
         with _h_col2:
-            fig_h2 = px.bar(heat_df, x='지역', y='최종불량률(%)', color='최종불량률(%)',
-                            color_continuous_scale='RdYlGn_r', text='최종불량률(%)',
-                            title='지역별 최종 불량률')
-            fig_h2.update_layout(height=320, margin=dict(l=0,r=0,t=40,b=0))
+            fig_h2 = px.bar(heat_df, x='지역', y='최종불량률(%)', color='등급_최종',
+                            color_discrete_map=_grade_colors,
+                            category_orders={'등급_최종': _grade_order},
+                            text='최종불량률(%)', title='지역별 최종 불량률')
+            fig_h2.update_layout(height=320, margin=dict(l=0,r=0,t=40,b=0),
+                                 legend_title_text='등급')
             st.plotly_chart(fig_h2, use_container_width=True)
         _show_cols = [c for c in ['지역','검사수량','불량수량','1차불량률(%)','최종불량률(%)','수정합격률(%)','공장수']
                       if c in heat_df.columns]
