@@ -249,10 +249,17 @@ def calc_factory_detail(raw_rows: list[dict], cache: dict,
     # 바이어 목록
     buyers = list({r.get('buyer', '') for r in rows if r.get('buyer')})
 
-    _total_inspec  = sum(r.get('inspec', 0) or 0 for r in rows)
-    _total_defect  = sum(r.get('qty_total', 0) or 0 for r in rows)
-    _total_final   = sum(r.get('최종불합격수량', 0) or 0 for r in rows)
-    _total_second  = sum(r.get('2차검사수량', 0) or 0 for r in rows)
+    # report_no 기준 중복 제거 (inspec/최종/2차는 건당 1회만 합산)
+    _seen_tot: set = set()
+    _total_inspec = 0; _total_final = 0; _total_second = 0
+    _total_defect = sum(r.get('qty_total', 0) or 0 for r in rows)
+    for r in rows:
+        rno = str(r.get('report_no') or '').strip() or f'__row_{id(r)}'
+        if rno not in _seen_tot:
+            _seen_tot.add(rno)
+            _total_inspec += r.get('inspec', 0) or 0
+            _total_final  += r.get('최종불합격수량', 0) or 0
+            _total_second += r.get('2차검사수량', 0) or 0
 
     return {
         'factory':            factory_name,
