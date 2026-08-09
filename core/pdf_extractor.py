@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 pdf_extractor.py — PDF 불량보고서 → Excel 변환 (GUI 없는 서버용 버전)
-원본: bulyang_rate_analyzer_v8.py (created by 김지연)
+원본: bulyang_rate_analyzer_v9.py (created by 김지연)
 의존성: pymupdf openpyxl
 """
 
@@ -24,7 +24,7 @@ RAW_HEADERS = [
     "스타일번호", "품명", "검사종류", "ORDER Q'TY", "INSPEC. Q'TY", "PASS Q'TY", "FAIL Q'TY",
     "1차검사수량", "1차합격수량", "1차불합격수량", "2차검사수량", "2차합격수량", "최종불합격수량",
 ]
-for i in range(1, 20):
+for i in range(1, 21):   # 19 → 20으로 확장
     RAW_HEADERS += [f"주요불량{i}", f"불량갯수{i}"]
 
 DETAIL_HEADERS = [
@@ -114,38 +114,146 @@ def extract_tables(page):
         return []
 
 
+# ── 합계 행 정규화 ──────────────────────────────────────────────────
+def _filter_color_total(color_total):
+    """
+    전수평가 합계 행에서 빈 셀과 퍼센트 값을 제거합니다.
+    PDF 포맷에 따라 빈 열 수가 달라 고정 인덱스가 어긋나는 문제를 해결합니다.
+    반환: ['합계', 1차검사수량, 1차불합격수량, 최종불합격수량,
+            재평가합격수량, 최종합격수량(PASS), 총검사수량(INSPEC)]
+    """
+    _pct = re.compile(r"^\d+\.?\d*\s*%$")
+    return ["합계"] + [
+        x for x in color_total[1:]
+        if x and not _pct.match(x.replace(",", "").strip())
+    ]
+
+
 # ── 불량 내용 파싱 ──────────────────────────────────────────────────
 def parse_defects(table_rows, full_text):
+    """
+    '주요 불량 내용' 표를 정확히 추출합니다.
+
+    v9 수정사항:
+    - 헤더 행을 동적으로 탐지해 열 위치 결정 (단일·2-table 포맷 모두 지원)
+    - table0 + table1 통합 전달 필요 (호출부에서 처리)
+    - 합 계 행과 개별 합 비교 → 차이를 '기타'로 보정 (PDF 추출 누락 대응)
+    - 불량 항목 상한 19 → 20
+    """
+    rows = [[normalize_space(c) for c in (row or [])] for row in (table_rows or [])]
+
     defects = []
-    for row in table_rows:
-        row = [normalize_space(c) for c in row]
+    header_idx = None
+    name_col = major_col = minor_col = None
+
+    # 1) '주요 불량 내용 / 중불량 / 경불량' 헤더 행 탐지
+    for i, row in enumerate(rows):
+        compact = [compact_label(c) for c in row]
+        if (any("주요불량내용" in c for c in compact)
+                and any("중불량" in c for c in compact)
+                and any("경불량" in c for c in compact)):
+            header_idx = i
+            for j, c in enumerate(compact):
+                if name_col is None and "주요불량내용" in c:
+                    name_col = j
+                if major_col is None and "중불량" in c:
+                    major_col = j
+                if minor_col is None and "경불량" in c:
+                    minor_col = j
+            break
+
+    total_major_from_sum = None
+    total_minor_from_sum = None
+
+    # 2) 헤더 아래 행 읽기, 합계/다음 섹션에서 종료
+    if header_idx is not None and name_col is not None and major_col is not None and minor_col is not None:
+        for row in rows[header_idx + 1:]:
+            if not row:
+                continue
+            first = compact_label(row[0] if row else "")
+            joined = "".join(compact_label(c) for c in row)
+
+            if first in ("합계", "합계계") or first.startswith("4.확인사항") or "4.확인사항" in joined:
+                if first in ("합계", "합계계"):
+                    total_major_from_sum = to_int(row[major_col] if major_col < len(row) else None)
+                    total_minor_from_sum = to_int(row[minor_col] if minor_col < len(row) else None)
+                break
+
+            name = normalize_space(row[name_col] if name_col < len(row) else "")
+            if not name:
+                continue
+            if name in ("주요 불량 내용", "중불량", "경불량", "불량 발견 부위", "부위참고"):
+                continue
+            if name.startswith("-") or re.match(r"^\d+\.", name):
+                continue
+
+            major = to_int(row[major_col] if major_col < len(row) else None) or 0
+            minor = to_int(row[minor_col] if minor_col < len(row) else None) or 0
+            if major + minor > 0:
+                defects.append({"name": name, "major": major, "minor": minor, "qty": major + minor})
+
+        if defects:
+            # 합 계 행과 개별 합 비교 → 차이가 있으면 '기타'로 보정
+            if total_major_from_sum is not None or total_minor_from_sum is not None:
+                diff_major = (total_major_from_sum or 0) - sum(d["major"] for d in defects)
+                diff_minor = (total_minor_from_sum or 0) - sum(d["minor"] for d in defects)
+                if diff_major > 0 or diff_minor > 0:
+                    defects.append({
+                        "name": "기타",
+                        "major": max(0, diff_major),
+                        "minor": max(0, diff_minor),
+                        "qty": max(0, diff_major) + max(0, diff_minor)
+                    })
+            return defects[:20]
+
+    # 3) 구형/다른 양식 fallback
+    section_rows = []
+    in_section = False
+    for row in rows:
+        joined = "".join(compact_label(c) for c in row)
+        first = compact_label(row[0] if row else "")
+        if "주요불량내용" in joined and (
+            first.startswith("3.") or first.startswith("4.") or first == "주요불량내용"
+        ):
+            in_section = True
+            continue
+        if in_section and ("확인사항" in joined or first in ("합계", "합계계")):
+            break
+        if in_section:
+            section_rows.append(row)
+
+    for row in section_rows:
         if not row:
             continue
-        name = row[0]
-        if name in ("3. 주요 불량 내용", "4. 주요 불량 내용", "주요 불량 내용", "", "합 계", "합계"):
-            continue
-        if name.startswith("-") or re.match(r"^\d+\.", name):
+        name = normalize_space(row[0] if len(row) > 0 else "")
+        if not name or name.startswith("-") or re.match(r"^\d+\.", name):
             continue
         major = to_int(row[1] if len(row) > 1 else None) or 0
         minor = to_int(row[2] if len(row) > 2 else None) or 0
         if major + minor > 0:
             defects.append({"name": name, "major": major, "minor": minor, "qty": major + minor})
-    if defects:
-        return defects[:19]
 
-    # fallback: 텍스트에서 추출
+    if defects:
+        return defects[:20]
+
+    # 4) 최후 fallback: 텍스트 기반 추출
     defect_names = [
-        "바텍 누락", "좌우 비대칭", "제사처리불량", "원단불량", "기름오염",
-        "구멍", "이색", "염반", "봉탈", "봉비", "퍼커링", "히까리", "잡사", "오염"
+        "바텍 누락", "좌우 비대칭", "제사처리불량", "제사처리 미흡",
+        "원단불량", "원단 불량", "기름오염", "구멍", "이색", "염반",
+        "봉탈", "봉비", "퍼커링", "히까리", "잡사", "오염",
+        "찝힘", "바늘자국", "늘어짐", "찢어짐"
     ]
+    text = normalize_space(full_text)
+    m = re.search(r"(?:3|4)\.\s*주요\s*불량\s*내용(.*?)(?:4|5)\.\s*확인사항", text, re.S)
+    defect_text = m.group(1) if m else ""
     for name in defect_names:
-        pat = re.compile(re.escape(name) + r"\s+(\d+)(?:\s+(\d+))?(?=\s+(?:\d+(?:,\d+)*|\d+\.))")
-        m = pat.search(full_text)
-        if m:
-            major = to_int(m.group(1)) or 0
-            minor = to_int(m.group(2)) or 0
+        pat = re.compile(re.escape(name) + r"\s+(\d+)(?:\s+(\d+))?")
+        mm = pat.search(defect_text)
+        if mm:
+            major = to_int(mm.group(1)) or 0
+            minor = to_int(mm.group(2)) or 0
             defects.append({"name": name, "major": major, "minor": minor, "qty": major + minor})
-    return defects[:19]
+    return defects[:20]
 
 
 # ── 파일명 메타데이터 추출 ───────────────────────────────────────────
@@ -298,14 +406,16 @@ def parse_pdf(pdf_path: str) -> dict:
             if not color_total:
                 raise ValueError("색상별 제품평가 수량 합계 행을 찾을 수 없음")
 
-            rec["1차검사수량"] = to_int(color_total[2] if len(color_total) > 2 else None) or second_qty
-            rec["1차불합격수량"] = to_int(color_total[3] if len(color_total) > 3 else None)
-            rec["최종불합격수량"] = to_int(color_total[6] if len(color_total) > 6 else None)
+            # 빈 셀·% 값 제거 후 인덱스 적용 (포맷별 빈 열 수 차이 대응)
+            ct = _filter_color_total(color_total)
+            rec["1차검사수량"] = to_int(ct[1] if len(ct) > 1 else None) or second_qty
+            rec["1차불합격수량"] = to_int(ct[2] if len(ct) > 2 else None)
+            rec["최종불합격수량"] = to_int(ct[3] if len(ct) > 3 else None)
             rec["2차검사수량"] = rec["1차불합격수량"]
-            rec["2차합격수량"] = to_int(color_total[8] if len(color_total) > 8 else None)
-            rec["PASS Q'TY"] = to_int(color_total[9] if len(color_total) > 9 else None)
+            rec["2차합격수량"] = to_int(ct[4] if len(ct) > 4 else None)
+            rec["PASS Q'TY"] = to_int(ct[5] if len(ct) > 5 else None)
             rec["FAIL Q'TY"] = rec["최종불합격수량"]
-            rec["INSPEC. Q'TY"] = to_int(color_total[11] if len(color_total) > 11 else None) or rec["1차검사수량"]
+            rec["INSPEC. Q'TY"] = to_int(ct[6] if len(ct) > 6 else None) or rec["1차검사수량"]
             rec["1차합격수량"] = (rec.get("1차검사수량") or 0) - (rec.get("1차불합격수량") or 0)
         else:
             shipment_total = None
@@ -334,7 +444,8 @@ def parse_pdf(pdf_path: str) -> dict:
             rec["2차검사수량"] = None
             rec["2차합격수량"] = None
 
-        rec["defects"] = parse_defects(table1, full_text)
+        # table0 + table1 통합 전달 (단일 테이블 PDF 대응)
+        rec["defects"] = parse_defects((table0 or []) + (table1 or []), full_text)
 
         required = ["REPORT NO.", "INS. DATE_시작일", "스타일번호", "INSPEC. Q'TY"]
         missing = [k for k in required if rec.get(k) in (None, "")]
@@ -367,9 +478,9 @@ def make_workbook(records: list[dict], output_path: str):
         defect_values = []
         for d in rec.get("defects", []):
             defect_values += [d["name"], d["qty"]]
-        while len(defect_values) < 38:
+        while len(defect_values) < 40:   # 20개 × 2열
             defect_values += [None, None]
-        ws.append(row + defect_values[:38])
+        ws.append(row + defect_values[:40])
 
     detail.append(["▶ 불량항목 상세"])
     detail.append(DETAIL_HEADERS)
