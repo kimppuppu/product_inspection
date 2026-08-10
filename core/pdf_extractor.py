@@ -47,8 +47,9 @@ def compact_label(s):
 def to_int(value):
     if value is None:
         return None
-    s = str(value).replace(",", "").replace("PCS", "").replace("pcs", "").strip()
-    m = re.search(r"-?\d+", s)
+    # PDF 렌더링 오류로 숫자 중간에 공백이 삽입되는 경우 제거 (예: '1 63' → '163')
+    s = str(value).replace(",", "").replace("PCS", "").replace("pcs", "").replace(" ", "").strip()
+    m = re.search(r"^-?\d+$", s)
     return int(m.group()) if m else None
 
 def first_match(pattern, text, flags=re.S):
@@ -418,31 +419,7 @@ def parse_pdf(pdf_path: str) -> dict:
             rec["INSPEC. Q'TY"] = to_int(ct[6] if len(ct) > 6 else None) or rec["1차검사수량"]
             rec["1차합격수량"] = (rec.get("1차검사수량") or 0) - (rec.get("1차불합격수량") or 0)
         else:
-            shipment_total = None
-            sample_total = None
-            for row in table0:
-                row = [normalize_space(c) for c in row]
-                if row and row[0] == "합계":
-                    nums = [to_int(x) for x in row if to_int(x) is not None]
-                    if len(nums) >= 2:
-                        shipment_total, sample_total = nums[0], nums[1]
-                    break
-            if shipment_total is None or sample_total is None:
-                m = re.search(r"합계\s+([0-9,]+)\s+([0-9,]+)\s+<\s*합\s*격\s*>", full_text)
-                if m:
-                    shipment_total = to_int(m.group(1))
-                    sample_total = to_int(m.group(2))
-
-            rec["1차검사수량"] = shipment_total or second_qty
-            rec["INSPEC. Q'TY"] = sample_total or second_qty
-            found = re.search(r"불량발견매수\s+(\d+)\s+(\d+)", full_text)
-            rec["1차불합격수량"] = (to_int(found.group(1)) or 0) + (to_int(found.group(2)) or 0) if found else None
-            rec["최종불합격수량"] = 0 if ("<합 격>" in full_text or "<합격>" in full_text or "합격허용매수 이내" in full_text) else rec.get("1차불합격수량")
-            rec["FAIL Q'TY"] = rec["최종불합격수량"]
-            rec["PASS Q'TY"] = (rec.get("INSPEC. Q'TY") or 0) - (rec.get("FAIL Q'TY") or 0) if rec.get("INSPEC. Q'TY") is not None else None
-            rec["1차합격수량"] = (rec.get("INSPEC. Q'TY") or 0) - (rec.get("1차불합격수량") or 0) if rec.get("INSPEC. Q'TY") is not None and rec.get("1차불합격수량") is not None else None
-            rec["2차검사수량"] = None
-            rec["2차합격수량"] = None
+            raise ValueError("샘플링 평가 보고서는 변환을 지원하지 않습니다 (전수평가 전용 프로그램)")
 
         # table0 + table1 통합 전달 (단일 테이블 PDF 대응)
         rec["defects"] = parse_defects((table0 or []) + (table1 or []), full_text)

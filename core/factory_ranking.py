@@ -1,5 +1,6 @@
 """
 factory_ranking.py — 공장·지역 불량률 분석 및 랭킹 계산 모듈
+# v2: qty_1st(원본 1차불합격) 기반 불량률 계산 — 2026-08-07
 """
 from __future__ import annotations
 from collections import defaultdict
