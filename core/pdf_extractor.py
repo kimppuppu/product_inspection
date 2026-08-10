@@ -100,6 +100,39 @@ def find_value_in_table(table_rows, label):
                     return value
     return None
 
+def detect_eval_type(table0, full_text):
+    """평가종류 판단: 전수평가/샘플링평가 반환, 판단 불가 시 None
+    - 단일 선택 양식: '평가종류' 옆 셀에 하나만 있음 → 그 값 반환
+    - 통합 선택 양식: '전수평가'+'샘플링평가' 둘 다 있음 → ● 마크 위치로 판단
+    - 테이블에서 못 찾으면 키워드 fallback
+    """
+    for row in table0 or []:
+        r = [normalize_space(c) for c in row]
+        for i, c in enumerate(r):
+            if c == "평가종류" and i + 1 < len(r):
+                vals = r[i + 1:]
+                has_full = "전수평가" in vals
+                has_samp = any(v in ("샘플링평가", "샘플링 평가") for v in vals)
+                if has_full and has_samp:
+                    # 통합 양식: ● 마크 위치로 판단
+                    if re.search(r'전수평가\s*\n?\s*●', full_text):
+                        return "전수평가"
+                    if re.search(r'샘플링평가\s*\n?\s*●|샘플링\s*평가\s*\n?\s*●', full_text):
+                        return "샘플링평가"
+                    return "전수평가"  # ● 판단 불가 시 전수 기본값
+                if has_full:
+                    return "전수평가"
+                if has_samp:
+                    return "샘플링평가"
+                break
+    # 테이블 미탐지 시 키워드 fallback
+    if "색상별 제품평가 수량" in full_text or "전수평가" in full_text:
+        return "전수평가"
+    if "색상별 오더수량" in full_text or "샘플링 평가" in full_text or "Sampling Plan" in full_text:
+        return "샘플링평가"
+    return None
+
+
 def find_header_text(table_rows):
     for row in table_rows:
         for c in row:
@@ -346,17 +379,20 @@ def parse_pdf(pdf_path: str) -> dict:
             raise ValueError("빈 PDF")
 
         full_text = text_from_pdf(doc)
-        is_full_inspection = "색상별 제품평가 수량" in full_text or "전수평가" in full_text
-        is_sampling = "색상별 오더수량" in full_text or "샘플링 평가" in full_text or "Sampling Plan" in full_text
 
         if "제품 평가 보고서" not in full_text:
             raise ValueError("문서 제목 확인 실패: '제품 평가 보고서' 텍스트를 찾을 수 없음")
-        if not (is_full_inspection or is_sampling):
-            raise ValueError("평가 방식 확인 실패: 전수/샘플링 방식을 식별할 수 없음")
 
         tables = extract_tables(doc[0])
         table0 = tables[0].extract() if len(tables) >= 1 else []
         table1 = tables[1].extract() if len(tables) >= 2 else []
+
+        eval_type = detect_eval_type(table0, full_text)
+        if not eval_type:
+            raise ValueError("평가 방식 확인 실패: 전수평가/샘플링평가를 식별할 수 없음")
+        is_full_inspection = (eval_type == "전수평가")
+        is_sampling = (eval_type == "샘플링평가")
+
         header_text = find_header_text(table0) or full_text
 
         rec = {"파일명": filename}
@@ -379,17 +415,14 @@ def parse_pdf(pdf_path: str) -> dict:
         rec["지역2"] = normalize_local_region(region_value) if region_value and not re.match(r"^[A-Z][0-9]{3}-", region_value) else None
         rec["품명"] = find_value_in_table(table0, "품 명")
         rec["스타일번호"] = find_value_in_table(table0, "품 번") or first_match(r"([A-Z]{3,}\d+[A-Z0-9]*)", filename)
-        rec["검사종류"] = find_value_in_table(table0, "평가종류")
+        rec["검사종류"] = eval_type  # detect_eval_type()으로 확정된 값 사용
         rec["ORDER Q'TY"] = to_int(find_value_in_table(table0, "총오더수량"))
 
         m_qty = re.search(r"([0-9,]+)\s*PCS\s+([0-9,]+)\s*PCS\s+([^\n]*?평가)", full_text)
         second_qty = None
         if m_qty:
             rec["ORDER Q'TY"] = rec.get("ORDER Q'TY") or to_int(m_qty.group(1))
-            rec["검사종류"] = rec.get("검사종류") or normalize_space(m_qty.group(3))
             second_qty = to_int(m_qty.group(2))
-        if not rec.get("검사종류"):
-            rec["검사종류"] = "샘플링 평가" if is_sampling else "전수평가"
 
         fallback_basic_fields_from_text(rec, full_text, filename)
 
