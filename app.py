@@ -100,7 +100,7 @@ st.markdown("""
 .fiti-logo-block { display: flex; align-items: center; gap: 10px; }
 .fiti-logo-text { font-size: 26px; font-weight: 900; letter-spacing: -1px; line-height: 1; }
 .fiti-logo-text .fi { color: #ffffff; }
-.fiti-logo-text .ti { color: var(--fiti-blue); }
+.fiti-logo-text .ti { color: #ffffff; }
 .fiti-logo-sub { display: flex; flex-direction: column; line-height: 1.3; }
 .fiti-logo-sub-kr { font-size: 13px; font-weight: 700; color: #ffffff; }
 .fiti-logo-sub-en { font-size: 9px; font-weight: 400; color: rgba(255,255,255,0.6); letter-spacing: 0.2px; }
