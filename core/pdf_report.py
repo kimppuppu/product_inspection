@@ -260,7 +260,7 @@ def generate_factory_pdf(detail: dict) -> bytes:
     story = []
 
     # ── 헤더: 제목(왼쪽) + FITI CI 로고(오른쪽) ──────────────────
-    LOGO_PATH = os.path.join(os.path.dirname(__file__), '..', 'BS 1-06 시그니처_국영문_가로형.png')
+    LOGO_PATH = os.path.join(os.path.dirname(__file__), 'fiti_logo.png')
     s_title_l = S('TL', fontSize=18, textColor=PRIMARY, alignment=TA_LEFT, spaceAfter=2, leading=24)
     s_fn_l    = S('FL', fontSize=13, textColor=PRIMARY, alignment=TA_LEFT, spaceAfter=2,
                   fontName=font_name, leading=18)

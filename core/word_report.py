@@ -741,7 +741,7 @@ def _spacer(doc):
     p.paragraph_format.space_after  = Pt(2)
 
 
-_LOGO_PATH = os.path.join(os.path.dirname(__file__), '..', 'BS 1-06 시그니처_국영문_가로형.png')
+_LOGO_PATH = os.path.join(os.path.dirname(__file__), 'fiti_logo.png')
 
 
 def _logo_header(doc, title, subtitle):
@@ -1238,18 +1238,8 @@ def generate_factory_word(detail: dict) -> bytes:
         sec.left_margin   = Cm(2.0);  sec.right_margin  = Cm(2.0)
         sec.top_margin    = Cm(2.0);  sec.bottom_margin = Cm(2.0)
 
-    # ── 헤더 ─────────────────────────────────────────────────────
-    _hr(doc)
-    p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.paragraph_format.space_before = Pt(4); p.paragraph_format.space_after = Pt(2)
-    _run(p, "공장 불량률 분석 보고서", sz=22, bold=True, color=C_HEADER)
-    p2 = doc.add_paragraph(); p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p2.paragraph_format.space_before = Pt(0); p2.paragraph_format.space_after = Pt(2)
-    _run(p2, factory, sz=16, bold=True, color=C_SUB)
-    p3 = doc.add_paragraph(); p3.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p3.paragraph_format.space_before = Pt(0); p3.paragraph_format.space_after = Pt(6)
-    _run(p3, f"보고일: {today}", sz=10, color=RGBColor(0x6C,0x75,0x7D))
-    _hr(doc)
+    # ── 헤더 (FITI CI 헤더) ───────────────────────────────────────
+    _logo_header(doc, f"공장 불량률 분석 보고서  |  {factory}", f"보고일: {today}")
 
     # ── 기본 정보 ─────────────────────────────────────────────────
     _sec_title(doc, "기본 정보")
