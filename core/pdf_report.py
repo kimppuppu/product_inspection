@@ -259,14 +259,31 @@ def generate_factory_pdf(detail: dict) -> bytes:
 
     story = []
 
-    # 헤더
-    story.append(HRFlowable(width="100%", thickness=4, color=PRIMARY, spaceAfter=12))
-    story.append(Paragraph("공장 불량률 분석 보고서", s_title))
-    story.append(Paragraph(factory, S('FN', fontSize=18, alignment=TA_CENTER,
-                                      spaceAfter=4, fontName=font_name,
-                                      leading=24)))
-    story.append(Paragraph(f"보고일: {today}", s_sub))
-    story.append(HRFlowable(width="100%", thickness=1, color=colors.lightgrey, spaceAfter=16))
+    # ── 헤더: 제목(왼쪽) + FITI CI 로고(오른쪽) ──────────────────
+    LOGO_PATH = os.path.join(os.path.dirname(__file__), '..', 'BS 1-06 시그니처_국영문_가로형.png')
+    s_title_l = S('TL', fontSize=18, textColor=PRIMARY, alignment=TA_LEFT, spaceAfter=2, leading=24)
+    s_fn_l    = S('FL', fontSize=13, textColor=PRIMARY, alignment=TA_LEFT, spaceAfter=2,
+                  fontName=font_name, leading=18)
+    s_sub_l   = S('SL', fontSize=10, textColor=GRAY,    alignment=TA_LEFT)
+    page_w = A4[0] - 3.5 * cm   # 좌우 마진 제외 유효폭
+    lw, rw = page_w * 0.58, page_w * 0.42
+    left_cells  = [Paragraph("공장 불량률 분석 보고서", s_title_l),
+                   Paragraph(factory, s_fn_l),
+                   Paragraph(f"보고일: {today}", s_sub_l)]
+    right_cells = [Image(LOGO_PATH, width=rw * 0.85, height=rw * 0.85 / 4.54)] \
+                  if os.path.exists(LOGO_PATH) else [Paragraph("FITI 시험연구원", s_sub)]
+    hdr_tbl = Table([[left_cells, right_cells]], colWidths=[lw, rw])
+    hdr_tbl.setStyle(TableStyle([
+        ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
+        ('ALIGN',         (1, 0), (1,  0),  'RIGHT'),
+        ('LINEBELOW',     (0, 0), (-1, -1), 2, PRIMARY),
+        ('TOPPADDING',    (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+        ('LEFTPADDING',   (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING',  (0, 0), (-1, -1), 0),
+    ]))
+    story.append(hdr_tbl)
+    story.append(Spacer(1, 12))
 
     # 기본 정보
     story.append(Paragraph("■ 기본 정보", s_section))
