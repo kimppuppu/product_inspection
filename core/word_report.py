@@ -744,47 +744,17 @@ def _spacer(doc):
 _LOGO_PATH = os.path.join(os.path.dirname(__file__), 'fiti_logo.png')
 
 
-def _logo_header(doc, title, subtitle):
-    """FITI CI 헤더: 제목(왼쪽) + 로고(오른쪽), 하단 파란 구분선"""
-    tbl = doc.add_table(rows=1, cols=2)
-    tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
-    # 테이블 전체 테두리 제거
-    tbl_pr = tbl._tbl.get_or_add_tblPr()
-    tbl_bdr = OxmlElement('w:tblBorders')
-    for edge in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
-        el = OxmlElement(f'w:{edge}'); el.set(qn('w:val'), 'nil'); tbl_bdr.append(el)
-    tbl_pr.append(tbl_bdr)
-
-    lc, rc = tbl.cell(0, 0), tbl.cell(0, 1)
-
-    # 왼쪽: 제목 + 부제
-    lc.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-    p1 = lc.paragraphs[0]
-    p1.paragraph_format.space_before = Pt(4); p1.paragraph_format.space_after = Pt(0)
-    _run(p1, title, sz=20, bold=True, color=C_HEADER)
-    p2 = lc.add_paragraph()
-    p2.paragraph_format.space_before = Pt(2); p2.paragraph_format.space_after = Pt(4)
-    _run(p2, subtitle, sz=10, color=C_SUB)
-
-    # 오른쪽: 로고
-    rc.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-    p3 = rc.paragraphs[0]
-    p3.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    p3.paragraph_format.space_before = Pt(4); p3.paragraph_format.space_after = Pt(4)
-    if os.path.exists(_LOGO_PATH):
-        p3.add_run().add_picture(_LOGO_PATH, width=Cm(5.5))
-
-    # 셀 테두리: 하단만 파란 선
-    def _cell_bdr(cell):
-        tcPr = cell._tc.get_or_add_tcPr()
-        b = OxmlElement('w:tcBorders')
-        for edge in ('top', 'left', 'right'):
-            el = OxmlElement(f'w:{edge}'); el.set(qn('w:val'), 'nil'); b.append(el)
-        bot = OxmlElement('w:bottom'); bot.set(qn('w:val'), 'single')
-        bot.set(qn('w:sz'), '14'); bot.set(qn('w:space'), '0')
-        bot.set(qn('w:color'), '003f85'); b.append(bot); tcPr.append(b)
-
-    _cell_bdr(lc); _cell_bdr(rc)
+def _add_logo_to_header(doc):
+    """모든 페이지 머리글 오른쪽에 FITI CI 로고 삽입"""
+    if not os.path.exists(_LOGO_PATH):
+        return
+    for section in doc.sections:
+        header = section.header
+        p = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after  = Pt(2)
+        p.add_run().add_picture(_LOGO_PATH, width=Cm(4.5))
 
 
 def _hr(doc):
@@ -872,8 +842,15 @@ def generate_word_report(raw_rows: list, cache: dict, orientation: str = 'portra
                 sec._sectPr.append(pgSz)
             pgSz.set(_qn('w:orient'), 'landscape')
 
-    # ── 제목 (FITI CI 헤더) ───────────────────────────────────────
-    _logo_header(doc, "제품 불량률 분석 보고서", f"검사 기간 : {period}")
+    # ── 머리글에 FITI CI 로고 삽입 ───────────────────────────────────
+    _add_logo_to_header(doc)
+
+    # ── 제목 ─────────────────────────────────────────────────────
+    p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _run(p, "제품 불량률 분석 보고서", sz=22, bold=True, color=C_HEADER)
+    p2 = doc.add_paragraph(); p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _run(p2, f"검사 기간 : {period}", sz=11, color=C_SUB)
+    _hr(doc)
 
     # ── 섹션1: 전체 불량률 요약 ───────────────────────────────────
     if IS_ALL:
@@ -1238,8 +1215,18 @@ def generate_factory_word(detail: dict) -> bytes:
         sec.left_margin   = Cm(2.0);  sec.right_margin  = Cm(2.0)
         sec.top_margin    = Cm(2.0);  sec.bottom_margin = Cm(2.0)
 
-    # ── 헤더 (FITI CI 헤더) ───────────────────────────────────────
-    _logo_header(doc, f"공장 불량률 분석 보고서  |  {factory}", f"보고일: {today}")
+    # ── 머리글에 FITI CI 로고 삽입 ───────────────────────────────────
+    _add_logo_to_header(doc)
+
+    # ── 제목 ─────────────────────────────────────────────────────
+    _hr(doc)
+    p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _run(p, "공장 불량률 분석 보고서", sz=22, bold=True, color=C_HEADER)
+    p2 = doc.add_paragraph(); p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _run(p2, factory, sz=16, bold=True, color=C_SUB)
+    p3 = doc.add_paragraph(); p3.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _run(p3, f"보고일: {today}", sz=10, color=RGBColor(0x6C, 0x75, 0x7D))
+    _hr(doc)
 
     # ── 기본 정보 ─────────────────────────────────────────────────
     _sec_title(doc, "기본 정보")
